@@ -62,8 +62,9 @@ are unreachable from the internet — independent of the firewall.
 
 **Files that define this stack** (in the repo):
 - `docker-compose.prod.yml` — the 5 services + volumes.
-- `deploy/nginx/conf.d/muzikskul.conf` — reverse proxy, WS upgrade, www→root, TLS.
-- `deploy/init-letsencrypt.sh` — one-time SSL bootstrap.
+- `deploy/nginx/conf.d/muzikskul-http.conf` — `:80` server (ACME challenge + →HTTPS redirect), **no cert refs, always loadable**.
+- `deploy/nginx/conf.d/muzikskul-ssl.conf` — `:443` servers (reverse proxy, WS upgrade, www→root, TLS); cert-gated, enabled after issuance.
+- `deploy/init-letsencrypt.sh` — one-time SSL bootstrap (HTTP-first, then enable HTTPS).
 - `.env.production.example` — environment template (copy to `.env.production`).
 - `deploy/backup.sh` — Postgres backup.
 
@@ -182,8 +183,9 @@ docker compose --env-file .env.production -f docker-compose.prod.yml build
 ## 9. Start containers + 10. Configure SSL (single bootstrap)
 
 The first SSL issuance and container startup are handled by one script (it starts
-postgres/redis/app, boots nginx with a temporary cert, then obtains the real
-Let's Encrypt cert and reloads). **DNS (step 2) must already resolve to the VPS.**
+postgres/redis/app, boots nginx **HTTP-only** so it can serve the ACME challenge,
+obtains the real Let's Encrypt cert, then enables the HTTPS block and reloads).
+**DNS (step 2) must already resolve to the VPS.**
 
 ```bash
 chmod +x deploy/init-letsencrypt.sh
@@ -305,7 +307,8 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d --bui
 | Symptom | Likely cause | Fix |
 |--------|--------------|-----|
 | `certbot` fails: *challenge failed / 404* | DNS not propagated, or port 80 blocked | `dig +short muzikskul.xyz` must equal `<VPS_IP>`; `ufw status` shows 80 allowed; re-run `./deploy/init-letsencrypt.sh`. Use `STAGING=1` while iterating to avoid rate limits. |
-| Site loads over HTTP but **HTTPS fails / cert error** | Cert not issued yet, or dummy cert still present | Re-run `./deploy/init-letsencrypt.sh`; check `docker compose ... logs certbot`. |
+| Site loads over HTTP but **HTTPS fails / cert error** | Cert not issued, or `muzikskul-ssl.conf` not re-enabled | Re-run `./deploy/init-letsencrypt.sh`; ensure `deploy/nginx/conf.d/muzikskul-ssl.conf` exists (not parked as `deploy/nginx/muzikskul-ssl.conf.held`); check `docker compose ... logs certbot`. |
+| **nginx crash-loops: `BIO_new_file() failed … fullchain.pem`** | `:443` config active before the cert exists | Park it: `mv deploy/nginx/conf.d/muzikskul-ssl.conf deploy/nginx/muzikskul-ssl.conf.held`, `docker compose ... up -d --force-recreate nginx`, then run `./deploy/init-letsencrypt.sh`. |
 | **Socket.IO won't connect** (polling works, WS fails) | Proxy not upgrading, or origin ≠ APP_URL | Confirm `deploy/nginx/conf.d/muzikskul.conf` has the `Upgrade`/`Connection` headers (it does); ensure you're on `https://muzikskul.xyz` (not `www`, not IP) so the origin matches `APP_URL`. |
 | **CORS error on the socket** | Browsing `www`/IP, or `APP_URL` wrong | `APP_URL` must be `https://muzikskul.xyz`; `www` is 301'd to root. Edit `.env.production`, then `up -d app`. |
 | App container restarting / unhealthy | Missing env or DB not ready | `docker compose ... logs app`; verify `DATABASE_URL`/`REDIS_URL` in `.env.production`; the app fail-fasts if they're missing (`assertRuntimeConfig`). |

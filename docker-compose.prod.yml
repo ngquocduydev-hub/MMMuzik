@@ -76,13 +76,21 @@ services:
       - '80:80'
       - '443:443'
     volumes:
-      # Our server block replaces the stock conf.d/default.conf.
+      # Two server blocks: muzikskul-http.conf (:80, ALWAYS loadable, no cert refs)
+      # and muzikskul-ssl.conf (:443, cert-gated — added by init-letsencrypt.sh
+      # only after the cert exists). This split is what prevents the crash loop.
       - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
       # Shared with certbot: live certs + the ACME http-01 webroot.
       - certbot_conf:/etc/letsencrypt
       - certbot_www:/var/www/certbot
-    # Reload every 6h so renewed certs are picked up without a restart.
-    command: /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g 'daemon off;'"
+    # No cert generation needed: the :80 server block has NO certificate references,
+    # so nginx can never crash-loop on a missing cert. The loop reloads every 6h to
+    # pick up renewed certs (and the :443 block once init-letsencrypt.sh enables it).
+    command:
+      - /bin/sh
+      - -c
+      - |
+        while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g 'daemon off;'
     depends_on:
       - app
     restart: unless-stopped
@@ -92,7 +100,12 @@ services:
     volumes:
       - certbot_conf:/etc/letsencrypt
       - certbot_www:/var/www/certbot
-    # Attempt renewal every 12h (no-op until ~30 days before expiry).
+    # RENEW loop: attempt renewal every 12h (no-op until ~30 days before expiry).
+    # WARNING: because this entrypoint is overridden, `docker compose run certbot
+    # certonly …` passes its args to THIS shell loop and silently runs `renew`
+    # ("No renewals were attempted"). For one-off issuance always restore the real
+    # entrypoint:  docker compose run --rm --entrypoint certbot certbot certonly …
+    # (init-letsencrypt.sh already does this).
     entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot; sleep 12h & wait $${!}; done;"
     restart: unless-stopped
 

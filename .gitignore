@@ -35,3 +35,6 @@ npm-debug.log*
 # misc
 coverage
 *.tsbuildinfo
+
+# Transient SSL-bootstrap parking file (init-letsencrypt.sh)
+deploy/nginx/*.held
