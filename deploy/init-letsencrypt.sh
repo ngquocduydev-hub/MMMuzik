@@ -4,7 +4,7 @@
 # Solves the chicken-and-egg: nginx won't start without a cert, but certbot
 # can't get a cert without nginx serving the http-01 challenge. We:
 #   1) drop a temporary self-signed cert so nginx can start,
-#   2) start nginx,
+#   2) start nginx (serves the ACME challenge on :80),
 #   3) delete the dummy and request the REAL cert via the webroot challenge,
 #   4) reload nginx with the real cert.
 #
@@ -12,6 +12,12 @@
 #   chmod +x deploy/init-letsencrypt.sh && ./deploy/init-letsencrypt.sh
 #
 # Reads DOMAIN / CERTBOT_EMAIL / STAGING from .env.production.
+#
+# NOTE on `docker compose run --entrypoint`: it sets ONLY the executable (argv[0]),
+# it is NOT shell-split. So we use `--entrypoint sh <service> -c '<script>'` for
+# shell steps, and the certbot image's DEFAULT entrypoint (`certbot`) for the
+# issuance step (`run --rm certbot certonly ...`). The TLS policy is inlined in the
+# nginx conf, so no options-ssl-nginx.conf download / dhparam file is needed.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -26,41 +32,34 @@ DOMAINS=(-d "${DOMAIN}" -d "www.${DOMAIN}")
 COMPOSE="docker compose --env-file .env.production -f docker-compose.prod.yml"
 LIVE_PATH="/etc/letsencrypt/live/${DOMAIN}"
 
-echo "### Building images + starting app/postgres/redis ..."
+echo "### [1/5] Building image + starting app/postgres/redis ..."
 $COMPOSE up -d --build app
 
-echo "### Writing recommended TLS options (referenced by the nginx conf) ..."
-$COMPOSE run --rm --entrypoint "/bin/sh -c '\
-  curl -s https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/src/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf > /etc/letsencrypt/options-ssl-nginx.conf; \
-  openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048'" certbot
-
-echo "### Creating a temporary self-signed cert so nginx can boot ..."
-$COMPOSE run --rm --entrypoint "/bin/sh -c '\
+echo "### [2/5] Creating a temporary self-signed cert so nginx can boot ..."
+$COMPOSE run --rm --entrypoint sh certbot -c "\
   mkdir -p ${LIVE_PATH} && \
   openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
     -keyout ${LIVE_PATH}/privkey.pem \
     -out ${LIVE_PATH}/fullchain.pem \
-    -subj \"/CN=localhost\"'" certbot
+    -subj '/CN=localhost'"
 
-echo "### Starting nginx (serving the http-01 challenge on :80) ..."
+echo "### [3/5] Starting nginx (serving the http-01 challenge on :80) ..."
 $COMPOSE up -d nginx
 
-echo "### Deleting the dummy cert ..."
-$COMPOSE run --rm --entrypoint "/bin/sh -c 'rm -rf ${LIVE_PATH}'" certbot
+echo "### [4/5] Replacing the dummy cert with a real Let's Encrypt certificate ..."
+$COMPOSE run --rm --entrypoint sh certbot -c "rm -rf ${LIVE_PATH}"
 
 STAGING_ARG=""
 if [ "${STAGING}" != "0" ]; then STAGING_ARG="--staging"; fi
 
-echo "### Requesting the real certificate from Let's Encrypt ..."
-$COMPOSE run --rm --entrypoint "certbot certonly --webroot -w /var/www/certbot \
+# Default entrypoint is `certbot`; pass the command + args directly.
+$COMPOSE run --rm certbot certonly --webroot -w /var/www/certbot \
   ${STAGING_ARG} \
-  --email ${EMAIL} ${DOMAINS[*]} \
-  --rsa-key-size 2048 --agree-tos --no-eff-email --force-renewal" certbot
+  --email "${EMAIL}" "${DOMAINS[@]}" \
+  --rsa-key-size 2048 --agree-tos --no-eff-email
 
-echo "### Reloading nginx with the real cert ..."
+echo "### [5/5] Reloading nginx with the real cert + starting the renew loop ..."
 $COMPOSE exec nginx nginx -s reload
-
-echo "### Starting the certbot auto-renew loop ..."
 $COMPOSE up -d certbot
 
 echo "### Done. Visit https://${DOMAIN}"
