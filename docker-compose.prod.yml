@@ -1,0 +1,103 @@
+# MMMuzik V2 — PRODUCTION topology (single VPS, fully containerized).
+#
+#   docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+#
+# Hardening vs. the base docker-compose.yml:
+#   - ONLY nginx publishes ports (80/443). app/postgres/redis have NO `ports:`
+#     mapping, so they live only on the internal bridge network and are
+#     unreachable from the public internet (requirement 11 & 12).
+#   - All services `restart: unless-stopped` → survive a VPS reboot (with the
+#     Docker engine enabled on boot).
+#   - The app runs `prisma migrate deploy` before `pnpm start` → migrations apply
+#     automatically on every deploy (requirement 8). The image itself never
+#     auto-migrates (Dockerfile CMD) — migration is this explicit deploy step.
+#
+# Secrets come from .env.production (gitignored). See .env.production.example.
+
+services:
+  app:
+    build:
+      context: .
+      target: runner
+    # Apply migrations, then start the custom Next + Socket.IO server.
+    command: sh -c "pnpm prisma migrate deploy && pnpm start"
+    env_file:
+      - .env.production
+    # NO `ports:` — reachable only as `app:3000` on the internal network (via nginx).
+    expose:
+      - '3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # /api/health verifies BOTH Postgres and Redis connectivity.
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:3000/api/health']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    # NO `ports:` — internal only (requirement 12).
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    # NO `ports:` — internal only (requirement 12).
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    # The ONLY publicly exposed ports in the whole stack (requirement 11).
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      # Our server block replaces the stock conf.d/default.conf.
+      - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
+      # Shared with certbot: live certs + the ACME http-01 webroot.
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    # Reload every 6h so renewed certs are picked up without a restart.
+    command: /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g 'daemon off;'"
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    # Attempt renewal every 12h (no-op until ~30 days before expiry).
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot; sleep 12h & wait $${!}; done;"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  certbot_conf:
+  certbot_www:
