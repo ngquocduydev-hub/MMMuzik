@@ -1,0 +1,25 @@
+# MMMuzik V2 — development override (hot reload, mounted source).
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Overrides the app service to build only deps and run `pnpm dev` (tsx watch)
+# against mounted source. Postgres/Redis come from the base compose file.
+
+services:
+  app:
+    build:
+      context: .
+      target: deps
+    command: sh -c "pnpm prisma generate && pnpm prisma migrate deploy && pnpm dev"
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://mmmuzik:mmmuzik@postgres:5432/mmmuzik
+      REDIS_URL: redis://redis:6379
+      APP_URL: http://localhost:3000
+      PORT: 3000
+    volumes:
+      # Mount source for hot reload; keep container node_modules and .next.
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    healthcheck:
+      # Give the dev server (compile on boot) more time before probing.
+      start_period: 90s

@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * MMMuzik design tokens — DARK MODE FIRST (matches MMMuzik.fe / V1).
+ * Spotify (music-forward) + Discord (presence/rooms) inspired. Brand accent is a
+ * vibrant VIOLET (`--primary`); magenta `--accent` is the secondary highlight;
+ * green is retained as `--success` ("in sync" / online).
+ * Never hardcode hex in components — consume these CSS variables via Tailwind.
+ */
+
+@layer base {
+  :root,
+  .dark {
+    --background: 240 18% 7%; /* app canvas, near-black with a violet tilt */
+    --surface: 240 14% 11%; /* cards / panels */
+    --surface-2: 240 12% 15%; /* elevated: popovers, inputs, hover */
+
+    --foreground: 240 20% 97%; /* primary text */
+    --muted: 240 12% 15%;
+    --muted-foreground: 240 8% 64%; /* secondary text, timestamps */
+
+    --card: 240 14% 11%;
+    --card-foreground: 240 20% 97%;
+    --popover: 240 12% 13%;
+    --popover-foreground: 240 20% 97%;
+
+    --border: 240 10% 20%;
+    --input: 240 10% 18%;
+
+    --primary: 258 90% 66%; /* violet brand accent */
+    --primary-foreground: 0 0% 100%;
+
+    --accent: 326 84% 64%; /* magenta — secondary highlight / presence */
+    --accent-foreground: 0 0% 100%;
+
+    --success: 142 71% 45%; /* green: "in sync" / online */
+    --success-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --ring: 258 90% 66%;
+    --radius: 0.85rem;
+  }
+
+  /* Opt-in light theme (dark is the default applied on <html>). */
+  .light {
+    --background: 240 20% 98%;
+    --surface: 0 0% 100%;
+    --surface-2: 240 16% 96%;
+    --foreground: 240 20% 10%;
+    --muted: 240 16% 94%;
+    --muted-foreground: 240 6% 40%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 20% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 20% 10%;
+    --border: 240 12% 88%;
+    --input: 240 12% 90%;
+    --primary: 258 90% 60%;
+    --primary-foreground: 0 0% 100%;
+    --accent: 326 84% 58%;
+    --accent-foreground: 0 0% 100%;
+    --success: 142 71% 40%;
+    --success-foreground: 0 0% 100%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --ring: 258 90% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    text-rendering: optimizeLegibility;
+  }
+  /* Accessible focus ring everywhere. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+@layer utilities {
+  /* Ambient brand glow used behind the hero + now-playing art. */
+  .bg-aurora {
+    background-image:
+      radial-gradient(60% 60% at 15% 0%, hsl(var(--primary) / 0.18), transparent 60%),
+      radial-gradient(50% 50% at 100% 10%, hsl(var(--accent) / 0.14), transparent 55%),
+      radial-gradient(40% 40% at 80% 100%, hsl(var(--success) / 0.08), transparent 60%);
+  }
+  .text-gradient-brand {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(92deg, hsl(var(--primary)), hsl(var(--accent)));
+  }
+  .surface-panel {
+    @apply rounded-2xl border border-border/70 bg-surface shadow-panel;
+  }
+  /* Thin custom scrollbar for internal scroll areas (queue / chat / participants). */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 9999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* Respect users who prefer reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

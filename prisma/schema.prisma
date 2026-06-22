@@ -1,0 +1,198 @@
+// MMMuzik V2 — Prisma schema.
+//
+// Session / Room / Participant support the room foundation + the
+// server-authoritative playback engine. Playback state is EMBEDDED on Room
+// (pb_*), per docs/DATABASE.md (D3) — the Room aggregate is the single
+// consistency boundary. Track + QueueItem back the collaborative queue;
+// ChatMessage backs live chat (SPEC §7.11, own aggregate + soft-delete).
+//
+// Structural decisions:
+//  - Participant composite PK (roomId, sessionId) — a session is unique per room
+//    (V1 §12.3 fix).
+//  - room.hostSessionId is the authoritative single-host pointer (domain-enforced,
+//    no FK to avoid a rooms<->sessions cycle).
+//  - pbPositionMs / pbRevision are BigInt in DB; converted to/from number at the
+//    repository boundary (positions fit JS safe-int range comfortably).
+//  - snake_case + plural names; timestamptz UTC.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoomStatus {
+  active
+  idle
+  closed
+
+  @@map("room_status")
+}
+
+enum PlaybackStatus {
+  idle
+  playing
+  paused
+
+  @@map("playback_status")
+}
+
+enum MusicProvider {
+  youtube
+  spotify
+
+  @@map("music_provider")
+}
+
+enum ParticipantRole {
+  host
+  member
+
+  @@map("participant_role")
+}
+
+/// Optional / future accounts (docs/DATABASE.md §1). Guests never create a row.
+model User {
+  id        String    @id @default(uuid()) @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  sessions  Session[]
+
+  @@map("users")
+}
+
+/// Anonymous guest identity. `id` is the value carried in the session cookie.
+/// Carries displayName/avatar so a returning browser restores the same identity.
+model Session {
+  id           String        @id @default(uuid()) @db.Uuid
+  userId       String?       @map("user_id") @db.Uuid
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  displayName  String        @map("display_name") @db.VarChar(40)
+  avatar       String?       @db.VarChar(512)
+  lastSeenAt   DateTime      @default(now()) @map("last_seen_at") @db.Timestamptz
+  expiresAt    DateTime      @map("expires_at") @db.Timestamptz
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+  participants Participant[]
+  // No chat_messages relation: session_id is stored but NOT FK-enforced, so chat
+  // history survives session cleanup (docs/DATABASE.md §relationships).
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// Room aggregate root. Playback state is EMBEDDED here (pb_*).
+model Room {
+  id            String         @id @default(uuid()) @db.Uuid
+  code          String         @unique @db.VarChar(8)
+  name          String         @db.VarChar(80)
+  status        RoomStatus     @default(active)
+  hostSessionId String         @map("host_session_id") @db.Uuid
+
+  // ── embedded PlaybackState (the authoritative anchor) ────────────────────
+  pbStatus        PlaybackStatus @default(idle) @map("pb_status")
+  pbCurrentItemId String?        @map("pb_current_item_id") @db.Uuid // queue item id (Phase 6)
+  pbCurrentVideoId String?       @map("pb_current_video_id") @db.VarChar(16) // YouTube id (Phase 5)
+  pbPositionMs    BigInt         @default(0) @map("pb_position_ms")   // true offset AT pbUpdatedAt
+  pbUpdatedAt     DateTime       @default(now()) @map("pb_updated_at") @db.Timestamptz // anchor T
+  pbRevision      BigInt         @default(0) @map("pb_revision")      // monotonic; anti-stale
+  pbCurrentDurationMs BigInt     @default(0) @map("pb_current_duration_ms") // current track length (0=unknown); auto-next timer
+
+  // ── lifecycle / concurrency / audit ──────────────────────────────────────
+  version        Int       @default(0) // optimistic concurrency token
+  closedAt       DateTime? @map("closed_at") @db.Timestamptz
+  lastActivityAt DateTime  @default(now()) @map("last_activity_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  participants Participant[]
+  queueItems   QueueItem[]
+  messages     ChatMessage[]
+
+  @@index([status, lastActivityAt])
+  @@map("rooms")
+}
+
+/// Composite PK (roomId, sessionId) — a session is unique PER ROOM (V1 §12.3).
+model Participant {
+  roomId         String          @map("room_id") @db.Uuid
+  sessionId      String          @map("session_id") @db.Uuid
+  nickname       String          @db.VarChar(40)
+  avatar         String?         @db.VarChar(512)
+  role           ParticipantRole @default(member)
+  isOnline       Boolean         @default(true) @map("is_online")
+  joinedAt       DateTime        @default(now()) @map("joined_at") @db.Timestamptz
+  lastSeenAt     DateTime        @default(now()) @map("last_seen_at") @db.Timestamptz
+  disconnectedAt DateTime?       @map("disconnected_at") @db.Timestamptz
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  room    Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, sessionId])
+  @@index([roomId, joinedAt])
+  @@index([sessionId])
+  @@index([disconnectedAt])
+  @@map("participants")
+}
+
+/// Resolved-metadata catalog. Keyed by provider identity (dedup); durable cache.
+model Track {
+  id              String        @id @default(uuid()) @db.Uuid
+  provider        MusicProvider
+  providerTrackId String        @map("provider_track_id") @db.VarChar(64) // YouTube 11-char id
+  title           String        @db.VarChar(300)
+  durationMs      BigInt        @default(0) @map("duration_ms") // 0 = unknown placeholder
+  thumbnailUrl    String?       @map("thumbnail_url") @db.VarChar(1024)
+  resolvedAt      DateTime      @default(now()) @map("resolved_at") @db.Timestamptz
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+  queueItems      QueueItem[]
+
+  @@unique([provider, providerTrackId])
+  @@map("tracks")
+}
+
+model QueueItem {
+  id               String   @id @default(uuid()) @db.Uuid
+  roomId           String   @map("room_id") @db.Uuid
+  trackId          String   @map("track_id") @db.Uuid
+  position         Int // 0-based; recompacted on removal
+  addedBySessionId String   @map("added_by_session_id") @db.Uuid
+  addedByNickname  String   @map("added_by_nickname") @db.VarChar(40)
+  addedAt          DateTime @default(now()) @map("added_at") @db.Timestamptz
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  room  Room  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  track Track @relation(fields: [trackId], references: [id], onDelete: Restrict)
+
+  @@index([roomId, position])
+  @@index([trackId])
+  @@map("queue_items")
+}
+
+/// Chat (SPEC §7.11). Own aggregate, soft-delete. `nickname` is snapshotted at
+/// send time (REQ-CHAT-2). `session_id` is stored but NOT FK-enforced, so history
+/// outlives session cleanup. Reads MUST filter `isDeleted: false` (centralized in
+/// the chat repository — Prisma has no global filter; docs/DATABASE.md §soft-delete).
+model ChatMessage {
+  id        String    @id @default(uuid()) @db.Uuid
+  roomId    String    @map("room_id") @db.Uuid
+  sessionId String    @map("session_id") @db.Uuid
+  nickname  String    @db.VarChar(40) // snapshot at send time
+  body      String    @db.VarChar(2000)
+  sentAt    DateTime  @default(now()) @map("sent_at") @db.Timestamptz
+  isDeleted Boolean   @default(false) @map("is_deleted")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, sentAt])
+  @@map("chat_messages")
+}

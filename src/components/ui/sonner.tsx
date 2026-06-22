@@ -1,0 +1,29 @@
+'use client';
+
+import { useTheme } from 'next-themes';
+import { Toaster as Sonner } from 'sonner';
+
+type ToasterProps = React.ComponentProps<typeof Sonner>;
+
+/** App toaster, themed to the dark surfaces. Mounted once in the root layout. */
+export function Toaster({ ...props }: ToasterProps) {
+  const { theme = 'dark' } = useTheme();
+
+  return (
+    <Sonner
+      theme={theme as ToasterProps['theme']}
+      className="toaster group"
+      position="bottom-center"
+      toastOptions={{
+        classNames: {
+          toast:
+            'group toast group-[.toaster]:bg-surface group-[.toaster]:text-foreground group-[.toaster]:border-border group-[.toaster]:shadow-panel group-[.toaster]:rounded-xl',
+          description: 'group-[.toast]:text-muted-foreground',
+          actionButton: 'group-[.toast]:bg-primary group-[.toast]:text-primary-foreground',
+          cancelButton: 'group-[.toast]:bg-surface-2 group-[.toast]:text-muted-foreground',
+        },
+      }}
+      {...props}
+    />
+  );
+}

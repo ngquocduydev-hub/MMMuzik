@@ -1,0 +1,67 @@
+# MMMuzik V2 — production-style topology.
+#   docker compose up
+# Brings up app (custom Next + Socket.IO server), PostgreSQL, and Redis.
+
+services:
+  app:
+    build:
+      context: .
+      target: runner
+    # The app image does not auto-migrate. For a single-instance compose we run
+    # `prisma migrate deploy` once, then start the server.
+    command: sh -c "pnpm prisma migrate deploy && pnpm start"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://mmmuzik:mmmuzik@postgres:5432/mmmuzik
+      REDIS_URL: redis://redis:6379
+      APP_URL: http://localhost:3000
+      PORT: 3000
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:3000/api/health']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mmmuzik
+      POSTGRES_PASSWORD: mmmuzik
+      POSTGRES_DB: mmmuzik
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mmmuzik -d mmmuzik']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

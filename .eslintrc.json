@@ -1,0 +1,31 @@
+{
+  "root": true,
+  "extends": ["next/core-web-vitals", "next/typescript", "prettier"],
+  "rules": {
+    "@typescript-eslint/no-explicit-any": "error",
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
+    ],
+    "no-console": ["warn", { "allow": ["warn", "error"] }]
+  },
+  "overrides": [
+    {
+      "files": ["src/shared/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": ["@/lib/*", "@/server/*", "@/app/*", "@lib/*", "@server/*"],
+            "paths": [
+              { "name": "@prisma/client", "message": "shared/ must stay pure — no Prisma." },
+              { "name": "ioredis", "message": "shared/ must stay pure — no Redis." },
+              { "name": "socket.io", "message": "shared/ must stay pure — no Socket.IO." },
+              { "name": "next", "message": "shared/ must stay framework-free — no Next." }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
