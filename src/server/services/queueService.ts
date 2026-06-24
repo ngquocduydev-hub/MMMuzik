@@ -311,8 +311,10 @@ export async function clearQueue(roomId: string, sessionId: string | null): Prom
 
 /**
  * Idempotent advance — no-op unless `endedItemId` is still current. Advances to
- * the next item (playing@0) or drains to idle. Called by the host ENDED report,
- * the server timer, and skip (PLAYBACK §7.4).
+ * the next item (playing@0) or drains to idle, AND removes the finished track from
+ * the queue (the queue holds only the current + upcoming tracks — no history).
+ * Called by the host ENDED report, the server timer, skip, and play-time recovery
+ * (PLAYBACK §7.4).
  */
 export async function advanceIfCurrent(roomId: string, endedItemId: string): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -345,6 +347,10 @@ export async function advanceIfCurrent(roomId: string, endedItemId: string): Pro
       if (!(await roomRepo.updatePlaybackAnchor(roomId, room.version, anchor, 0))) continue;
       await broadcastPlayback(toPlaybackStateDto(roomId, anchor));
     }
+    // The finished track leaves the queue (no history kept) — clients get the
+    // updated full snapshot. removeItem is idempotent if it's already gone.
+    await queueRepo.removeItem(roomId, endedItemId);
+    await broadcastQueue(roomId);
     logger.info({ roomId, endedItemId, advancedTo: next?.id ?? null }, 'playback:advance');
     return;
   }
@@ -358,12 +364,9 @@ export async function skip(roomId: string, sessionId: string | null): Promise<vo
   await requireParticipant(roomId, sessionId);
   const skippedId = room.pbCurrentItemId;
   if (!skippedId) return;
-  // Advance the playback anchor to the next track (or idle), THEN drop the skipped
-  // track from the queue so it doesn't linger or reappear on reconnect. Both the
-  // anchor (via advance) and the full queue snapshot are broadcast — server-authoritative.
+  // advanceIfCurrent moves the anchor to the next track (or idle), removes the
+  // skipped track, and broadcasts the new anchor + full queue snapshot.
   await advanceIfCurrent(roomId, skippedId);
-  await queueRepo.removeItem(roomId, skippedId);
-  await broadcastQueue(roomId);
 }
 
 /**
@@ -382,9 +385,8 @@ export async function recoverFromError(
   const room = await requireRoom(roomId);
   if (!isHost(room, sessionId)) return; // guests handle errors locally
   if (room.pbCurrentItemId !== erroredItemId) return; // idempotent — already moved on
+  // advanceIfCurrent advances past the bad track, removes it, and broadcasts.
   await advanceIfCurrent(roomId, erroredItemId);
-  await queueRepo.removeItem(roomId, erroredItemId);
-  await broadcastQueue(roomId);
   logger.info({ roomId, erroredItemId }, 'playback:recoverFromError');
 }
 

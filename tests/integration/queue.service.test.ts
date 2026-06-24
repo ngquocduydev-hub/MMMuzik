@@ -215,6 +215,23 @@ describe('auto-next (skip / advance / idle)', () => {
     await advanceIfCurrent(room.id, c.id);
     expect((await getPlaybackState(room.id)).status).toBe('idle');
   });
+
+  it('removes each finished track from the queue on natural advance (no history)', async () => {
+    const { host, room } = await freshRoom();
+    const a = await addTrack(room.id, host.id, VID1); // current
+    const b = await addTrack(room.id, host.id, VID2);
+    const c = await addTrack(room.id, host.id, VID3);
+
+    await advanceIfCurrent(room.id, a.id); // a finishes → removed, b current
+    expect((await getQueue(room.id)).map((i) => i.id)).toEqual([b.id, c.id]);
+
+    await advanceIfCurrent(room.id, b.id); // b finishes → removed, c current
+    expect((await getQueue(room.id)).map((i) => i.id)).toEqual([c.id]);
+
+    await advanceIfCurrent(room.id, c.id); // c finishes → removed, idle + empty
+    expect(await getQueue(room.id)).toHaveLength(0);
+    expect((await getPlaybackState(room.id)).status).toBe('idle');
+  });
 });
 
 describe('clearQueue + reportDuration', () => {

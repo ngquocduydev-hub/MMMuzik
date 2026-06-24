@@ -80,7 +80,10 @@ export function useChatNotifications(): void {
         try {
           const note = new Notification(`${last.nickname} · ${roomName}`, {
             body: last.body,
-            tag: 'mmmuzik-chat', // same tag → newer message replaces the previous one
+            // UNIQUE tag per message: a shared tag makes Windows silently REPLACE the
+            // previous toast (it lands in the Action Center with no banner). A unique
+            // tag pops a fresh banner for every message — what the user expects.
+            tag: `mmmuzik-chat-${last.id}`,
           });
           note.onclick = () => {
             window.focus();

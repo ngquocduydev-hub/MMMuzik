@@ -59,6 +59,7 @@ export function YouTubePlayer() {
   const setMuted = usePlayerStore((s) => s.setMuted);
   const gestured = usePlayerStore((s) => s.gestured);
   const setGestured = usePlayerStore((s) => s.setGestured);
+  const captions = usePlayerStore((s) => s.captions);
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<YT.Player | null>(null);
@@ -82,11 +83,56 @@ export function YouTubePlayer() {
   const isProgrammatic = () => Date.now() < programmaticUntilRef.current;
 
   /**
+   * Apply the captions/subtitles preference to the player. The IFrame caption API
+   * (load/unloadModule, get/setOption) isn't in @types/youtube — call through a
+   * minimal typed view. Reads the live store flag so it's safe to call from anywhere.
+   *
+   * ON: load the captions module, then select the first available track. The
+   * tracklist is only populated once the video is loaded/playing, so when we're
+   * called early (toggled mid-load) it's empty — we then JUST load the module and
+   * leave track selection to the PLAYING re-apply (handleStateChange). We must NEVER
+   * fall through to `track:{}` here: an empty track CLEARS captions, so clearing it
+   * while the user wants them ON is exactly the toggle-during-load bug.
+   * OFF: clear the track and unload the module.
+   */
+  const applyCaptions = () => {
+    const p = playerRef.current as unknown as {
+      loadModule?: (m: string) => void;
+      unloadModule?: (m: string) => void;
+      setOption?: (m: string, o: string, v: unknown) => void;
+      getOption?: (m: string, o: string) => unknown;
+    } | null;
+    if (!p) return;
+    const want = usePlayerStore.getState().captions;
+    try {
+      if (want) {
+        p.loadModule?.('captions');
+        const tracks = p.getOption?.('captions', 'tracklist') as
+          | Array<{ languageCode?: string }>
+          | undefined;
+        const lang = tracks && tracks.length > 0 ? tracks[0]?.languageCode : undefined;
+        // Only select a track once we actually have one. If the tracklist isn't ready
+        // yet, the module is loaded and the PLAYING re-apply will pick the track —
+        // do NOT clear it with `{}` (that would turn captions back off).
+        if (lang) p.setOption?.('captions', 'track', { languageCode: lang });
+      } else {
+        p.setOption?.('captions', 'track', {});
+        p.unloadModule?.('captions');
+      }
+    } catch {
+      /* caption API unavailable or the video has no caption track — ignore */
+    }
+  };
+
+  /**
    * HOST-only background reports (NOT user interactions): correct the real track
    * duration, and accelerate auto-next when the video ends. Reads live store
    * state so the (mount-time) closure never goes stale across a host transfer.
    */
   const handleStateChange = (state: number) => {
+    // Captions apply for EVERYONE once the video is playing (tracklist is ready then).
+    if (state === 1 /* PLAYING */) applyCaptions();
+
     const { playback } = usePlaybackStore.getState();
     const { room, session } = useRoomStore.getState();
     const roomId = room?.id;
@@ -215,6 +261,14 @@ export function YouTubePlayer() {
     }
   }, [ready, volume, muted]);
 
+  // ── captions/subtitles (CC) — local display preference ───────────────────────
+  // Apply on toggle and on video change. Also re-applied from handleStateChange when
+  // the video reaches PLAYING (the caption tracklist is only available by then).
+  useEffect(() => {
+    if (ready) applyCaptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, captions, videoId]);
+
   // ── follow the anchor: re-assert play + drift-reconcile (unchanged engine) ───
   useEffect(() => {
     if (!ready) return;
@@ -272,19 +326,11 @@ export function YouTubePlayer() {
     };
   }, [ready, muted, gestured, setMuted, setGestured]);
 
-  // 16:9, full width, edge-to-edge. The box ALWAYS keeps a true 16:9 ratio so the
-  // iframe matches the video and never pillarboxes (black bars). Height is bounded
-  // by capping the WIDTH (height = width × 9/16) instead of the height — a plain
-  // `max-h` would squash the box wider-than-16:9 and YouTube would letterbox inside
-  // it. Base cap 133.33vh ≈ 75vh tall: the mobile tab and the tablet column give the
-  // player its own scroll space, so it can be large there. On desktop (lg) the 3-col
-  // layout stacks the queue UNDER the player in the SAME column — a 75vh player left
-  // the queue a ~60px sliver (header only) — so there we tighten to 100vh ≈ 56vh tall
-  // so the queue always keeps a usable, scrollable area. The cap engages only on
-  // wide/short viewports (the 16:9 video then centers with the aurora at the sides);
-  // narrower viewports fill the full container width.
+  // Full-bleed 16:9 video — fills the whole frame width (no max-width cap, no side
+  // aurora). 16:9 fits standard music videos edge-to-edge; the rare non-16:9 video is
+  // letterboxed by YouTube inside the iframe (its aspect isn't exposed to crop cleanly).
   return (
-    <div className="relative mx-auto aspect-video w-full max-w-[133.33vh] overflow-hidden bg-black lg:max-w-[100vh]">
+    <div className="relative aspect-video w-full overflow-hidden bg-black">
       {/* The YT API replaces this node with its iframe. */}
       <div ref={mountRef} className="h-full w-full" />
 

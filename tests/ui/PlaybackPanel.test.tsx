@@ -38,7 +38,6 @@ beforeEach(() => {
   useRoomStore.getState().setRoom(room);
   useRoomStore.getState().setSession({ id: 's-guest', displayName: 'Guest', avatar: null });
   useQueueStore.getState().hydrate([track]);
-  // paused so nothing animates and the position is frozen/deterministic
   usePlaybackStore.setState({
     playback: {
       roomId: 'r1',
@@ -54,21 +53,14 @@ beforeEach(() => {
   });
 });
 
-describe('PlaybackPanel (V1 native-controls model)', () => {
-  it('renders the resolved track metadata + provider badge + the sync indicator', () => {
+describe('PlaybackPanel (video-only stage)', () => {
+  it('shows just the video — no title / artist / sync / provider / hatch chrome', () => {
     render(<PlaybackPanel />);
-    expect(screen.getByText('Blinding Lights')).toBeInTheDocument(); // split title
-    expect(screen.getByText('The Weeknd')).toBeInTheDocument(); // split artist
-    expect(screen.getByText('YouTube')).toBeInTheDocument(); // provider badge
-    expect(screen.getByText('In sync')).toBeInTheDocument(); // sync health (rtt 40 → good)
-  });
-
-  it('always offers the YouTube escape hatch (no custom transport bar in V1)', () => {
-    render(<PlaybackPanel />);
-    expect(screen.getByRole('link', { name: /open on youtube/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
-    // V1 has no custom transport: there is no Play button rendered by the card.
-    expect(screen.queryByRole('button', { name: 'Play' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Blinding Lights')).not.toBeInTheDocument();
+    expect(screen.queryByText('The Weeknd')).not.toBeInTheDocument();
+    expect(screen.queryByText('In sync')).not.toBeInTheDocument();
+    expect(screen.queryByText('YouTube')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /open on youtube/i })).not.toBeInTheDocument();
   });
 
   it('shows the "Nothing playing" empty state when idle', () => {
