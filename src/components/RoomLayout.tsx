@@ -6,6 +6,7 @@ import { Users, ListMusic, Music2, MessageCircle, DoorClosed } from 'lucide-reac
 import { useRoomStore } from '@/features/room/store';
 import { useChatStore } from '@/features/chat/store';
 import { useRoomExperience } from '@/features/room/hooks/useRoomExperience';
+import { useChatNotifications } from '@/features/chat/hooks/useChatNotifications';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { cn } from '@/lib/utils';
 import { RoomHeader } from './RoomHeader';
@@ -184,6 +185,7 @@ function MobileLayout() {
  */
 export function RoomLayout({ roomId }: { roomId: string }) {
   useRoomExperience(roomId);
+  useChatNotifications(); // desktop + tab-title chat notifications when backgrounded
 
   const isReady = useRoomStore((s) => s.isReady);
   const closed = useRoomStore((s) => s.closed);

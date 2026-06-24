@@ -1,15 +1,18 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 import './globals.css';
 import { ThemeProvider } from '@/components/theme-provider';
 import { Toaster } from '@/components/ui/sonner';
 
 /**
- * Inter is the design's typeface (UI.png §Typography). next/font self-hosts it at
- * build time and exposes it via a CSS variable consumed by tailwind's `font-sans`.
+ * Inter is the design's typeface (UI.png §Typography). The variable font is
+ * SELF-HOSTED from the repo (not fetched from Google Fonts at build time) so the
+ * Docker/CI build never depends on external network — see docs/features. Exposed via
+ * a CSS variable consumed by tailwind's `font-sans`.
  */
-const inter = Inter({
-  subsets: ['latin'],
+const inter = localFont({
+  src: './fonts/inter-latin-variable.woff2',
+  weight: '100 900',
   display: 'swap',
   variable: '--font-inter',
 });

@@ -1,17 +1,25 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Volume2 } from 'lucide-react';
 import { usePlaybackStore } from '@/features/playback/store';
 import { usePlayerStore } from '@/features/playback/playerStore';
 import { useRoomStore } from '@/features/room/store';
 import { getSocket } from '@/lib/socket-client';
+import { VolumeControl } from './VolumeControl';
 import { computeExpectedPosition } from '@/shared/domain/playback';
 import { shouldHardSeek } from '@/shared/domain/reconcile';
 import { RECONCILE_TICK_MS } from '@/shared/constants';
 import { loadYouTubeIframeApi, toPlayerPhase } from '@/lib/youtube';
 
 const PROGRAMMATIC_GUARD_MS = 800;
+
+/**
+ * YouTube IFrame error codes that mean the current video can NEVER play here
+ * (invalid id, removed/private, embedding disabled) — as opposed to a possibly
+ * transient HTML5 glitch (5). On these, the HOST asks the server to auto-skip so
+ * the whole room isn't stranded (docs/features/youtube-in-app-search Phase 1).
+ */
+const UNPLAYABLE_ERROR_CODES = new Set([2, 100, 101, 150]);
 
 /**
  * True only when the browser reports it will allow audible autoplay right now
@@ -49,6 +57,8 @@ export function YouTubePlayer() {
   const volume = usePlayerStore((s) => s.volume);
   const muted = usePlayerStore((s) => s.muted);
   const setMuted = usePlayerStore((s) => s.setMuted);
+  const gestured = usePlayerStore((s) => s.gestured);
+  const setGestured = usePlayerStore((s) => s.setGestured);
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<YT.Player | null>(null);
@@ -99,6 +109,24 @@ export function YouTubePlayer() {
     }
   };
 
+  /**
+   * Player error. Always surface the local overlay (Open on YouTube + Retry). If
+   * the viewer is the HOST and the video is permanently unplayable, ask the server
+   * to auto-skip so the whole room recovers — a guest's error stays local only.
+   */
+  const handleError = (code: number) => {
+    setErrorCode(code);
+    if (!UNPLAYABLE_ERROR_CODES.has(code)) return;
+    const { playback } = usePlaybackStore.getState();
+    const { room, session } = useRoomStore.getState();
+    const roomId = room?.id;
+    const itemId = playback?.currentTrackId ?? null;
+    const host = !!room && !!session && room.hostSessionId === session.id;
+    if (host && roomId && itemId) {
+      getSocket().emit('playback:trackError', { roomId, itemId }, () => {});
+    }
+  };
+
   const loadCurrent = (id: string) => {
     const player = playerRef.current;
     if (!player) return;
@@ -138,7 +166,7 @@ export function YouTubePlayer() {
               if (soundAutoplayAllowed()) usePlayerStore.getState().setMuted(false);
             },
             onStateChange: (e) => handleStateChange(e.data),
-            onError: (e) => setErrorCode(e.data),
+            onError: (e) => handleError(e.data),
           },
         });
       })
@@ -229,16 +257,20 @@ export function YouTubePlayer() {
   }, [ready]);
 
   // ── §6.6: restore sound on the first user gesture anywhere (muted autoplay) ──
+  // Only until the user has interacted once; afterwards a manual mute must stick.
   useEffect(() => {
-    if (!ready || !muted) return;
-    const unmute = () => setMuted(false);
+    if (!ready || !muted || gestured) return;
+    const unmute = () => {
+      setMuted(false);
+      setGestured();
+    };
     window.addEventListener('pointerdown', unmute, { once: true });
     window.addEventListener('keydown', unmute, { once: true });
     return () => {
       window.removeEventListener('pointerdown', unmute);
       window.removeEventListener('keydown', unmute);
     };
-  }, [ready, muted, setMuted]);
+  }, [ready, muted, gestured, setMuted, setGestured]);
 
   // 16:9, full width, edge-to-edge. The box ALWAYS keeps a true 16:9 ratio so the
   // iframe matches the video and never pillarboxes (black bars). Height is bounded
@@ -275,16 +307,7 @@ export function YouTubePlayer() {
         />
       )}
 
-      {videoId && muted && !errorCode && (
-        <button
-          onClick={() => setMuted(false)}
-          aria-label="Tap to enable sound"
-          className="absolute bottom-3 right-3 z-10 inline-flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur transition hover:bg-black/85"
-        >
-          <Volume2 className="h-3.5 w-3.5" />
-          Tap to enable sound
-        </button>
-      )}
+      {videoId && errorCode === null && <VolumeControl />}
 
       {errorCode !== null && videoId && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/85 text-center text-sm">

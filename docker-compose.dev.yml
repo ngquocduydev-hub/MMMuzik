@@ -15,6 +15,8 @@ services:
       REDIS_URL: redis://redis:6379
       APP_URL: http://localhost:3000
       PORT: 3000
+      # From host .env (Compose substitution). Empty → search degrades to URL-paste.
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
     volumes:
       # Mount source for hot reload; keep container node_modules and .next.
       - .:/app

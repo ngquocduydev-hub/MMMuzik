@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SEARCH_QUERY_MAX_LEN } from '@/shared/constants';
 
 /**
  * Request validation (zod). Returns structured errors at the edge; the parsed
@@ -47,6 +48,11 @@ export const chatSendSchema = z.object({
 /** History page size: ?take= (default 50, clamped to 1..100 — REQ-CHAT-3). */
 export const chatHistoryQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+/** Search query: ?q= — trimmed, non-empty, capped (Phase 2). */
+export const searchQuerySchema = z.object({
+  q: z.string().trim().min(1, 'Enter something to search for').max(SEARCH_QUERY_MAX_LEN),
 });
 
 export type CreateRoomInput = z.infer<typeof createRoomSchema>;

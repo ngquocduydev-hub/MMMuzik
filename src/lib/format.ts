@@ -37,6 +37,16 @@ export function splitTrackTitle(title: string): { primary: string; secondary: st
   return { primary: title, secondary: null };
 }
 
+/** Compact view-count for search result cards: 1234567 → "1.2M", 12000 → "12K". */
+export function formatViewCount(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '';
+  const fmt = (v: number, suffix: string) => `${v.toFixed(1).replace(/\.0$/, '')}${suffix}`;
+  if (n >= 1_000_000_000) return fmt(n / 1_000_000_000, 'B');
+  if (n >= 1_000_000) return fmt(n / 1_000_000, 'M');
+  if (n >= 1_000) return fmt(n / 1_000, 'K');
+  return String(n);
+}
+
 /** ISO timestamp → `HH:MM` in the viewer's locale (chat message time). */
 export function formatClock(iso: string): string {
   const d = new Date(iso);

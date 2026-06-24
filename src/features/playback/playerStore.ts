@@ -10,17 +10,23 @@ import { create } from 'zustand';
 interface PlayerState {
   volume: number; // 0..100
   muted: boolean;
+  /** The user has interacted with sound at least once. Until then we keep the
+   *  autoplay-mute and unmute on the first gesture; after, manual mute sticks. */
+  gestured: boolean;
   setVolume: (volume: number) => void;
   setMuted: (muted: boolean) => void;
   toggleMuted: () => void;
+  setGestured: () => void;
 }
 
 export const usePlayerStore = create<PlayerState>((set) => ({
   volume: 100,
   muted: true,
+  gestured: false,
   // Nudging the volume implies the user wants to hear it → unmute.
   setVolume: (volume) =>
     set({ volume: Math.max(0, Math.min(100, Math.round(volume))), muted: false }),
   setMuted: (muted) => set({ muted }),
   toggleMuted: () => set((s) => ({ muted: !s.muted })),
+  setGestured: () => set({ gestured: true }),
 }));

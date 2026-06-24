@@ -7,6 +7,7 @@ import { getSocket } from '@/lib/socket-client';
 import { useRoomStore } from '@/features/room/store';
 import { useChatStore } from '@/features/chat/store';
 import { Panel } from '@/components/layout/Panel';
+import { ChatNotificationToggle } from '@/features/chat/components/ChatNotificationToggle';
 import { MessageList } from './chat/MessageList';
 import { MessageInput } from './chat/MessageInput';
 
@@ -42,7 +43,13 @@ export function ChatPanel({ visible = true }: { visible?: boolean } = {}) {
     });
 
   return (
-    <Panel title="Chat" icon={<MessageCircle className="h-4 w-4" />} flush className="h-full">
+    <Panel
+      title="Chat"
+      icon={<MessageCircle className="h-4 w-4" />}
+      action={<ChatNotificationToggle />}
+      flush
+      className="h-full"
+    >
       <MessageList messages={messages} systemEvents={systemEvents} selfId={selfId} />
       <MessageInput onSend={send} disabled={!room} />
     </Panel>

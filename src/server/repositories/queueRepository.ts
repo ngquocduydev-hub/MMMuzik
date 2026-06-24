@@ -9,7 +9,12 @@ export function upsertTrack(input: {
   providerTrackId: string;
   title: string;
   thumbnailUrl: string | null;
+  /** Authoritative duration (ms) when known at add time (Data API). 0/undefined
+   *  leaves the placeholder and waits for the host player's reportDuration. */
+  durationMs?: number;
 }): Promise<Track> {
+  const knownDuration =
+    input.durationMs && input.durationMs > 0 ? BigInt(Math.trunc(input.durationMs)) : null;
   return prisma.track.upsert({
     where: {
       provider_providerTrackId: {
@@ -17,13 +22,20 @@ export function upsertTrack(input: {
         providerTrackId: input.providerTrackId,
       },
     },
-    // On re-add, refresh title/thumbnail but KEEP a known duration.
-    update: { title: input.title, thumbnailUrl: input.thumbnailUrl, resolvedAt: new Date() },
+    // On re-add, refresh title/thumbnail; set duration only when newly known
+    // (never clobber a known duration with 0).
+    update: {
+      title: input.title,
+      thumbnailUrl: input.thumbnailUrl,
+      resolvedAt: new Date(),
+      ...(knownDuration !== null ? { durationMs: knownDuration } : {}),
+    },
     create: {
       provider: input.provider,
       providerTrackId: input.providerTrackId,
       title: input.title,
       thumbnailUrl: input.thumbnailUrl,
+      ...(knownDuration !== null ? { durationMs: knownDuration } : {}),
     },
   });
 }
@@ -50,6 +62,44 @@ export function findItem(roomId: string, itemId: string): Promise<QueueItemWithT
 
 export function count(roomId: string): Promise<number> {
   return prisma.queueItem.count({ where: { roomId } });
+}
+
+/**
+ * Count a session's UPCOMING items — those strictly after `afterPosition` (the
+ * current track's position; pass -1 when idle so all items count). Matches the
+ * "up next" semantics of features/queue/selectors (played items linger but don't
+ * count). Used for the per-user anti-domination cap.
+ */
+export function countUpcomingBySession(
+  roomId: string,
+  sessionId: string,
+  afterPosition: number,
+): Promise<number> {
+  return prisma.queueItem.count({
+    where: { roomId, addedBySessionId: sessionId, position: { gt: afterPosition } },
+  });
+}
+
+/**
+ * Find the first current-or-upcoming queue item for a given provider track id —
+ * items at or after `fromPosition` (pass the current position to include the
+ * playing track; 0 when idle). Used for warn-not-block duplicate detection.
+ */
+export function findActiveByVideoId(
+  roomId: string,
+  provider: MusicProvider,
+  providerTrackId: string,
+  fromPosition: number,
+): Promise<QueueItemWithTrack | null> {
+  return prisma.queueItem.findFirst({
+    where: {
+      roomId,
+      position: { gte: fromPosition },
+      track: { provider, providerTrackId },
+    },
+    orderBy: { position: 'asc' },
+    include: { track: true },
+  });
 }
 
 export async function addItemAtTail(

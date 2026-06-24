@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatMs, formatTrackTime, splitTrackTitle } from '@/lib/format';
+import { formatMs, formatTrackTime, splitTrackTitle, formatViewCount } from '@/lib/format';
 
 describe('formatMs', () => {
   it('formats ms as m:ss (seconds zero-padded)', () => {
@@ -35,6 +35,19 @@ describe('formatTrackTime (Feature 3 — queue row time)', () => {
 
   it('current row with unknown duration shows the live elapsed alone', () => {
     expect(formatTrackTime(30_000, 0)).toBe('0:30');
+  });
+});
+
+describe('formatViewCount', () => {
+  it('formats compactly with K/M/B and trims trailing .0', () => {
+    expect(formatViewCount(999)).toBe('999');
+    expect(formatViewCount(12_000)).toBe('12K');
+    expect(formatViewCount(1_234_567)).toBe('1.2M');
+    expect(formatViewCount(2_000_000_000)).toBe('2B');
+  });
+  it('returns empty string for invalid input', () => {
+    expect(formatViewCount(-1)).toBe('');
+    expect(formatViewCount(NaN)).toBe('');
   });
 });
 

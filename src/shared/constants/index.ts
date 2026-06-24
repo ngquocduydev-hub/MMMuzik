@@ -31,7 +31,38 @@ export const redisKeys = {
   playback: (roomId: string) => `room:${roomId}:playback`,
   queue: (roomId: string) => `room:${roomId}:queue`,
   advanceLock: (roomId: string, itemId: string) => `playback:advance-lock:${roomId}:${itemId}`,
+  /** Fixed-window rate-limit counter, e.g. scope='queue-add:burst', id='roomId:sessionId'. */
+  rateLimit: (scope: string, id: string) => `ratelimit:${scope}:${id}`,
+  /** Read-through cache of a search result page, keyed by normalized-query hash. */
+  searchCache: (queryHash: string) => `search:cache:${queryHash}`,
+  /** Daily YouTube Data API quota-units counter (circuit breaker), keyed by YYYY-MM-DD. */
+  searchQuotaDay: (day: string) => `search:quota:${day}`,
 } as const;
+
+// ── queue protection (docs/features/youtube-in-app-search Phase 1) ──────────
+// All tunable from telemetry. Applied server-side to EVERY add path (paste + search).
+export const QUEUE_MAX_SIZE = 500; // per-room ceiling backstop (bounds snapshot fan-out)
+export const QUEUE_MAX_PENDING_PER_USER = 10; // anti-domination: upcoming items per session
+export const QUEUE_ADD_BURST_LIMIT = 5; // adds allowed per burst window …
+export const QUEUE_ADD_BURST_WINDOW_MS = 10_000; // … 10s
+export const QUEUE_ADD_SUSTAINED_LIMIT = 30; // adds allowed per sustained window …
+export const QUEUE_ADD_SUSTAINED_WINDOW_MS = 5 * 60_000; // … 5min
+
+// ── search infrastructure (Phase 2) ─────────────────────────────────────────
+export const SEARCH_QUERY_MAX_LEN = 100; // boundary cap on the query string
+export const SEARCH_MAX_RESULTS = 12; // results per page (search.list maxResults)
+export const SEARCH_CACHE_TTL_S = 24 * 60 * 60; // cache a query's results 24h (0 quota on repeats)
+export const SEARCH_RATE_LIMIT = 10; // searches per window, per (room, session) …
+export const SEARCH_RATE_WINDOW_MS = 10_000; // … 10s — protects the shared daily quota
+export const SEARCH_LIST_COST = 100; // search.list quota cost (Data API)
+export const SEARCH_ENRICH_COST = 1; // videos.list enrich cost (Data API)
+/** Daily quota units reserved for search; below the 10k/day default so other
+ *  Data API use (add-time guards) keeps headroom. Circuit-breaker ceiling. */
+export const SEARCH_DAILY_QUOTA_BUDGET = 9000;
+
+// ── "who's adding" presence cue (Phase 5) ───────────────────────────────────
+export const QUEUE_ACTIVITY_TTL_MS = 3000; // a cue stays visible ~3s after the last ping
+export const QUEUE_ACTIVITY_MIN_INTERVAL_MS = 2000; // client debounce between activity pings
 
 // ── auto-next (Phase 6) ────────────────────────────────────────────────────
 export const ADVANCE_GRACE_MS = 1500; // tolerance before the timer declares end

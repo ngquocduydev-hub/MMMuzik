@@ -8,6 +8,7 @@ import type {
 import { useParticipantsStore } from '@/features/participants/store';
 import { usePlaybackStore } from '@/features/playback/store';
 import { useQueueStore } from '@/features/queue/store';
+import { useQueueActivityStore } from '@/features/queue/activityStore';
 import { useChatStore } from '@/features/chat/store';
 import { useRoomStore } from '@/features/room/store';
 
@@ -46,6 +47,7 @@ export function subscribeRealtime(socket: ClientSocket): () => void {
   };
   const closed = () => useRoomStore.getState().setClosed(true);
   const queueUpdated = (p: { queue: QueueItemDto[] }) => useQueueStore.getState().hydrate(p.queue);
+  const adding = (p: { sessionId: string }) => useQueueActivityStore.getState().ping(p.sessionId); // ephemeral "who's adding" cue
   const chatPosted = (p: { message: ChatMessageDto }) => useChatStore.getState().append(p.message); // dedupe-by-id in the store
 
   socket.on('playback:stateChanged', playback);
@@ -56,6 +58,7 @@ export function subscribeRealtime(socket: ClientSocket): () => void {
   socket.on('presence:hostChanged', hostChanged);
   socket.on('room:closed', closed);
   socket.on('queue:updated', queueUpdated);
+  socket.on('presence:adding', adding);
   socket.on('chat:messagePosted', chatPosted);
 
   return () => {
@@ -67,6 +70,7 @@ export function subscribeRealtime(socket: ClientSocket): () => void {
     socket.off('presence:hostChanged', hostChanged);
     socket.off('room:closed', closed);
     socket.off('queue:updated', queueUpdated);
+    socket.off('presence:adding', adding);
     socket.off('chat:messagePosted', chatPosted);
   };
 }

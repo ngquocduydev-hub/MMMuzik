@@ -5,9 +5,19 @@ import { extractYouTubeId } from '@/shared/domain/youtube';
 import { AppError, ERRORS } from '@/shared/errors';
 import type { QueueItemDto, PlaybackStateDto } from '@/shared/types';
 import { logger } from '@/lib/logger';
+import {
+  QUEUE_MAX_SIZE,
+  QUEUE_MAX_PENDING_PER_USER,
+  QUEUE_ADD_BURST_LIMIT,
+  QUEUE_ADD_BURST_WINDOW_MS,
+  QUEUE_ADD_SUSTAINED_LIMIT,
+  QUEUE_ADD_SUSTAINED_WINDOW_MS,
+} from '@/shared/constants';
 import * as roomRepo from '@/server/repositories/roomRepository';
 import * as queueRepo from '@/server/repositories/queueRepository';
 import { resolveYouTube } from '@/server/services/metadataResolver';
+import { fetchVideoDetails } from '@/server/services/youtubeDataApi';
+import { consumeRateLimit } from '@/server/services/rateLimiter';
 import { getQueueCache, setQueueCache } from '@/server/cache/queueCache';
 import { setPlaybackCache } from '@/server/cache/playbackCache';
 import { toQueueItemDto, toPlaybackStateDto } from '@/server/mappers';
@@ -88,25 +98,149 @@ export async function getQueue(roomId: string): Promise<QueueItemDto[]> {
   return items;
 }
 
-/** Any participant can add. The first track added to an idle room auto-plays. */
+/** Position of the current track (idle → -1) for upcoming-aware queue checks. */
+async function currentPosition(room: Room): Promise<number> {
+  if (!room.pbCurrentItemId) return -1;
+  const cur = await queueRepo.findItem(room.id, room.pbCurrentItemId);
+  return cur?.position ?? -1;
+}
+
+/**
+ * Per-(room, session) add rate limit — burst + sustained windows. Runs BEFORE any
+ * YouTube Data API spend so a flooder can't drain the shared quota. Throws
+ * QUEUE_RATE_LIMITED carrying retryAfterMs (surfaced on the ack envelope).
+ */
+async function enforceAddRateLimit(roomId: string, sessionId: string): Promise<void> {
+  const id = `${roomId}:${sessionId}`;
+  const burst = await consumeRateLimit(
+    'queue-add:burst',
+    id,
+    QUEUE_ADD_BURST_LIMIT,
+    QUEUE_ADD_BURST_WINDOW_MS,
+  );
+  if (!burst.allowed) {
+    throw new AppError(
+      ERRORS.QUEUE_RATE_LIMITED,
+      "You're adding songs too fast — give it a moment",
+      burst.retryAfterMs,
+    );
+  }
+  const sustained = await consumeRateLimit(
+    'queue-add:sustained',
+    id,
+    QUEUE_ADD_SUSTAINED_LIMIT,
+    QUEUE_ADD_SUSTAINED_WINDOW_MS,
+  );
+  if (!sustained.allowed) {
+    throw new AppError(
+      ERRORS.QUEUE_RATE_LIMITED,
+      "You've added a lot recently — take a short break",
+      sustained.retryAfterMs,
+    );
+  }
+}
+
+/**
+ * Resolve metadata AND enforce add-time availability guards. With the Data API
+ * configured: rejects unavailable / livestream / un-embeddable videos BEFORE they
+ * can enter the shared queue, and returns the authoritative duration. Without a
+ * key: falls back to keyless oEmbed (no availability guards, duration unknown) —
+ * preserving prior behavior (docs/features/youtube-in-app-search Phase 1).
+ */
+async function resolveAndGuard(
+  videoId: string,
+): Promise<{ title: string; thumbnailUrl: string | null; durationMs: number }> {
+  const details = await fetchVideoDetails(videoId);
+  if (!details) {
+    const meta = await resolveYouTube(videoId);
+    return { title: meta.title, thumbnailUrl: meta.thumbnailUrl, durationMs: 0 };
+  }
+  if (!details.exists) {
+    throw new AppError(ERRORS.QUEUE_UNPLAYABLE, "That video isn't available");
+  }
+  if (details.isLivestream) {
+    throw new AppError(ERRORS.QUEUE_LIVESTREAM, "Live streams aren't supported yet");
+  }
+  if (!details.embeddable) {
+    throw new AppError(
+      ERRORS.QUEUE_UNPLAYABLE,
+      "That video can't be played in MMMuzik — try opening it on YouTube",
+    );
+  }
+  return {
+    title: details.title,
+    thumbnailUrl: details.thumbnailUrl,
+    durationMs: details.durationMs,
+  };
+}
+
+/**
+ * Any participant can add. The first track added to an idle room auto-plays.
+ *
+ * Protection layer (docs/features/youtube-in-app-search Phase 1), enforced
+ * server-side in order — cheap checks before any Data API spend, and ALL guards
+ * before the auto-play branch so a bad first track can never strand the room:
+ *   1. rate limit (burst + sustained)   2. per-user pending cap + per-room ceiling
+ *   3. duplicate (warn-not-block)        4. availability guards + authoritative duration
+ */
 export async function addTrack(
   roomId: string,
   sessionId: string | null,
   urlOrId: string,
+  allowDuplicate = false,
 ): Promise<QueueItemDto> {
   const room = await requireRoom(roomId);
   const participant = await requireParticipant(roomId, sessionId);
+
+  await enforceAddRateLimit(roomId, participant.sessionId);
 
   const videoId = extractYouTubeId(urlOrId);
   if (!videoId)
     throw new AppError(ERRORS.QUEUE_INVALID_PROVIDER, 'Enter a valid YouTube URL or id');
 
-  const meta = await resolveYouTube(videoId);
+  const curPos = await currentPosition(room);
+
+  // Caps — cheap; reject before spending Data API quota.
+  const pendingByUser = await queueRepo.countUpcomingBySession(
+    roomId,
+    participant.sessionId,
+    curPos,
+  );
+  if (pendingByUser >= QUEUE_MAX_PENDING_PER_USER) {
+    throw new AppError(
+      ERRORS.QUEUE_USER_LIMIT,
+      `You can have up to ${QUEUE_MAX_PENDING_PER_USER} songs up next — wait for some to play`,
+    );
+  }
+  if ((await queueRepo.count(roomId)) >= QUEUE_MAX_SIZE) {
+    throw new AppError(ERRORS.QUEUE_FULL, 'The queue is full right now — try again shortly');
+  }
+
+  // Duplicate — warn-not-block: same video current or upcoming. Client confirms,
+  // then re-sends with allowDuplicate=true for a deliberate replay.
+  if (!allowDuplicate) {
+    const dup = await queueRepo.findActiveByVideoId(
+      roomId,
+      'youtube',
+      videoId,
+      Math.max(curPos, 0),
+    );
+    if (dup) {
+      const where = dup.id === room.pbCurrentItemId ? 'playing right now' : 'already up next';
+      throw new AppError(
+        ERRORS.QUEUE_DUPLICATE,
+        `"${dup.track.title}" is ${where} (added by ${dup.addedByNickname}) — add it again?`,
+      );
+    }
+  }
+
+  const meta = await resolveAndGuard(videoId);
   const track = await queueRepo.upsertTrack({
     provider: 'youtube',
     providerTrackId: videoId,
     title: meta.title,
     thumbnailUrl: meta.thumbnailUrl,
+    durationMs: meta.durationMs,
   });
   const item = await queueRepo.addItemAtTail(
     roomId,
@@ -115,7 +249,8 @@ export async function addTrack(
     participant.nickname,
   );
 
-  // Auto-play if nothing is currently playing.
+  // Auto-play if nothing is currently playing. Guards above already ran, so the
+  // first track can never be a livestream/unplayable item.
   if (room.pbCurrentItemId === null && room.pbStatus === 'idle') {
     await playItem(roomId, { id: item.id, videoId, durationMs: Number(track.durationMs) });
   }
@@ -229,6 +364,28 @@ export async function skip(roomId: string, sessionId: string | null): Promise<vo
   await advanceIfCurrent(roomId, skippedId);
   await queueRepo.removeItem(roomId, skippedId);
   await broadcastQueue(roomId);
+}
+
+/**
+ * Play-time recovery (docs/features/youtube-in-app-search Phase 1). The HOST's
+ * player reported the current track is unplayable (removed / embedding-disabled /
+ * region-blocked for the host). Advance past it AND remove it so the room is never
+ * stranded on dead air. Idempotent (no-op unless the errored item is still current)
+ * and HOST-only — a guest's local failure must never skip for everyone (the guest
+ * just gets the local "Open on YouTube" hatch on their own screen).
+ */
+export async function recoverFromError(
+  roomId: string,
+  sessionId: string | null,
+  erroredItemId: string,
+): Promise<void> {
+  const room = await requireRoom(roomId);
+  if (!isHost(room, sessionId)) return; // guests handle errors locally
+  if (room.pbCurrentItemId !== erroredItemId) return; // idempotent — already moved on
+  await advanceIfCurrent(roomId, erroredItemId);
+  await queueRepo.removeItem(roomId, erroredItemId);
+  await broadcastQueue(roomId);
+  logger.info({ roomId, erroredItemId }, 'playback:recoverFromError');
 }
 
 /** Host player ENDED accelerator — only the host's ended event drives advance. */

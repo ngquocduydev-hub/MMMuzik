@@ -6,10 +6,12 @@ import { useRoomStore } from '@/features/room/store';
 import { usePlaybackStore } from '@/features/playback/store';
 import { useQueueStore } from '@/features/queue/store';
 import { useUpNextCount } from '@/features/queue/selectors';
+import { useWhoIsAdding, describeAdders } from '@/features/queue/activityStore';
 import { Panel } from '@/components/layout/Panel';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { EmptyState } from '@/components/feedback/EmptyState';
+import { SearchDialog } from '@/features/search/components/SearchDialog';
 import { AddSongDialog } from './queue/AddSongDialog';
 import { QueueItem } from './queue/QueueItem';
 
@@ -31,6 +33,8 @@ export function QueueList({ bare = false }: { bare?: boolean } = {}) {
 
   // "Up next" = videos AFTER the currently-playing one (single source of truth).
   const upNext = useUpNextCount();
+  // Ephemeral "X is adding a song…" cue (excludes me; auto-expires).
+  const whoAdding = useWhoIsAdding();
 
   const remove = (id: string) => {
     if (roomId) getSocket().emit('queue:remove', { roomId, queueItemId: id }, () => {});
@@ -58,6 +62,7 @@ export function QueueList({ bare = false }: { bare?: boolean } = {}) {
             <SkipForward className="h-4 w-4" />
             Skip
           </Button>
+          <SearchDialog />
           <AddSongDialog />
         </div>
       }
@@ -65,12 +70,18 @@ export function QueueList({ bare = false }: { bare?: boolean } = {}) {
       bare={bare}
       className="h-full"
     >
+      {whoAdding.length > 0 && (
+        <p className="animate-pulse px-4 pt-2 text-xs text-muted-foreground" aria-live="polite">
+          {describeAdders(whoAdding)}
+        </p>
+      )}
       {items.length === 0 ? (
         <EmptyState
           className="py-8"
           icon={<ListMusic className="h-6 w-6" />}
           title="Queue's empty"
-          description="Add the first song to get the room going."
+          description="Search for a song or paste a link to get the room going."
+          action={<SearchDialog />}
         />
       ) : (
         <ScrollArea className="flex-1 scrollbar-thin">

@@ -5,6 +5,7 @@ import { Plus, ListPlus, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSocket } from '@/lib/socket-client';
 import { useRoomStore } from '@/features/room/store';
+import { useActivityPing } from '@/features/queue/activityStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +27,7 @@ import {
  */
 export function AddSongDialog() {
   const roomId = useRoomStore((s) => s.room?.id ?? null);
+  const pingActivity = useActivityPing();
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +44,7 @@ export function AddSongDialog() {
     if (!roomId || !url || adding) return;
     setError(null);
     setAdding(true);
+    pingActivity(roomId); // let others see "X is adding a song…"
     getSocket().emit('queue:add', { roomId, urlOrId: url }, (res) => {
       setAdding(false);
       if (res.success) {

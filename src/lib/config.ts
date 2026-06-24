@@ -40,6 +40,17 @@ export function getRedisUrl(): string {
 }
 
 /**
+ * YouTube Data API key — OPTIONAL. Read lazily so it can be toggled per-environment
+ * (and per-test) without a rebuild. When absent, the add path falls back to keyless
+ * oEmbed and the Data-API-only guards (embeddability / livestream / authoritative
+ * duration) are inert (docs/features/youtube-in-app-search Phase 1). When present,
+ * those guards activate. NEVER expose this to the client — server-side only.
+ */
+export function getYouTubeApiKey(): string | undefined {
+  return process.env.YOUTUBE_API_KEY || undefined;
+}
+
+/**
  * Fail-fast validation of required runtime env. Call once at SERVER STARTUP
  * (not at import) so a misconfigured deployment crashes loudly — but the build,
  * which never calls this, stays env-independent.

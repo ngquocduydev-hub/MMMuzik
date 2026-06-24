@@ -80,6 +80,35 @@ export interface QueueItemDto {
 }
 
 /**
+ * A YouTube search result (docs/features/youtube-in-app-search Phase 2). Returned
+ * by GET /api/rooms/:id/search. Enriched via the Data API so the UI can show enough
+ * to pick the right version AND flag what can't be added. `addable` is a UX hint —
+ * the server STILL re-guards authoritatively on the actual add (Phase 1).
+ */
+export interface SearchResultDto {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  thumbnailUrl: string | null;
+  durationMs: number; // 0 for a livestream
+  viewCount: number | null; // popularity signal; null when unavailable
+  isLivestream: boolean;
+  embeddable: boolean;
+  /** false → UI disables Add (livestream / un-embeddable / unavailable). */
+  addable: boolean;
+}
+
+/**
+ * GET /api/rooms/:id/search response. `available: false` means search is degraded
+ * (no API key configured or the daily quota budget is spent) — the UI falls back to
+ * pasting a YouTube link. Distinct from an empty result set (`available: true, []`).
+ */
+export interface SearchResponseDto {
+  available: boolean;
+  results: SearchResultDto[];
+}
+
+/**
  * A chat message (docs/REALTIME_ENGINE.md Appendix A; docs/SPEC.md §7.11).
  * `nickname` is the sender's name AT SEND TIME (snapshot — REQ-CHAT-2), so
  * history reads correctly even after a rename or leave. No avatar on the wire:

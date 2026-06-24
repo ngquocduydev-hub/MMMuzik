@@ -35,14 +35,23 @@ export interface ClientToServerEvents {
     payload: { roomId: string; endedItemId: string },
     ack: (res: ApiResponse<{ ok: true }>) => void,
   ) => void;
+  // Play-time recovery: the current track can't play. ONLY the host's report drives
+  // a room-wide auto-skip (idempotent); a guest's player error is handled locally
+  // (docs/features/youtube-in-app-search Phase 1).
+  'playback:trackError': (
+    payload: { roomId: string; itemId: string },
+    ack: (res: ApiResponse<{ ok: true }>) => void,
+  ) => void;
   'playback:reportDuration': (
     payload: { roomId: string; queueItemId: string; durationMs: number },
     ack: (res: ApiResponse<{ ok: true }>) => void,
   ) => void;
 
-  // queue (Phase 6) — add is any participant; remove/reorder/clear are host-only
+  // queue (Phase 6) — add is any participant; remove/reorder/clear are host-only.
+  // allowDuplicate: re-send with true after the client confirms a QUEUE_DUPLICATE
+  // warning (warn-not-block; docs/features/youtube-in-app-search Phase 1).
   'queue:add': (
-    payload: { roomId: string; urlOrId: string },
+    payload: { roomId: string; urlOrId: string; allowDuplicate?: boolean },
     ack: (res: ApiResponse<QueueItemDto>) => void,
   ) => void;
   'queue:remove': (
@@ -57,6 +66,9 @@ export interface ClientToServerEvents {
     payload: { roomId: string },
     ack: (res: ApiResponse<{ ok: true }>) => void,
   ) => void;
+  // Ephemeral "I'm adding/searching" signal — fire-and-forget, NOT persisted.
+  // The server re-broadcasts to others as `presence:adding` (Phase 5 social cue).
+  'queue:activity': (payload: { roomId: string }) => void;
 
   // chat (SPEC §7.11) — any participant can send; history comes via REST snapshot
   'chat:send': (
@@ -84,6 +96,10 @@ export interface ServerToClientEvents {
   'presence:participantOnline': (payload: { roomId: string; sessionId: string }) => void;
   'presence:participantOffline': (payload: { roomId: string; sessionId: string }) => void;
   'presence:hostChanged': (payload: { roomId: string; newHostSessionId: string }) => void;
+  // Ephemeral "X is adding a song" cue (Phase 5). Convergent, keyed by sessionId,
+  // never persisted; clients resolve the nickname from the participants store and
+  // auto-expire the cue. Broadcast to OTHERS only (sender-excluded).
+  'presence:adding': (payload: { roomId: string; sessionId: string }) => void;
   'room:closed': (payload: { roomId: string; reason: string }) => void;
 }
 
