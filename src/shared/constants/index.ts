@@ -13,6 +13,15 @@ export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const ROOM_CODE_LENGTH = 6;
 export const ROOM_CODE_MAX_ATTEMPTS = 8; // retry on unique-collision
 export const ROOM_MAX_PARTICIPANTS = 50; // NFR-3
+export const PUBLIC_ROOMS_LIST_LIMIT = 50; // max rooms returned by the browse list
+
+// ── inactive-room reaper (auto-cleanup job) ────────────────────────────────
+// A room with NO online participants whose last activity is older than the
+// grace window is hard-deleted (cascades chat/queue/participants). Deliberate
+// divergence from the documented close→purge model — see ARCHITECTURE §14.
+export const ROOM_INACTIVE_GRACE_MS = 15 * 60 * 1000; // empty-for-this-long → reapable
+export const ROOM_REAPER_TICK_MS = 60 * 1000; // reaper poll interval
+export const ROOM_REAPER_LOCK_TTL_S = 50; // Redis single-reaper lock (< tick)
 
 // ── playback drift bands (Phase 3: calculate only, no seeking) ─────────────
 export const DRIFT_IGNORE_MS = 300; // |drift| < 300 → ignore
@@ -31,6 +40,8 @@ export const redisKeys = {
   playback: (roomId: string) => `room:${roomId}:playback`,
   queue: (roomId: string) => `room:${roomId}:queue`,
   advanceLock: (roomId: string, itemId: string) => `playback:advance-lock:${roomId}:${itemId}`,
+  /** Single-reaper lock so only one instance hard-deletes inactive rooms per tick. */
+  roomReaperLock: () => `room:reaper-lock`,
   /** Fixed-window rate-limit counter, e.g. scope='queue-add:burst', id='roomId:sessionId'. */
   rateLimit: (scope: string, id: string) => `ratelimit:${scope}:${id}`,
   /** Read-through cache of a search result page, keyed by normalized-query hash. */

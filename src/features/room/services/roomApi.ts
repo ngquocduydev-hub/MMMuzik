@@ -1,5 +1,12 @@
 import { httpGet, httpPost } from '@/lib/http';
-import type { RoomDto, ParticipantDto, SessionDto, RoomSummaryDto } from '@/shared/types';
+import type {
+  RoomDto,
+  ParticipantDto,
+  SessionDto,
+  RoomSummaryDto,
+  PublicRoomDto,
+  RoomVisibilityDto,
+} from '@/shared/types';
 
 interface RoomMembership {
   room: RoomDto;
@@ -7,8 +14,15 @@ interface RoomMembership {
   session: SessionDto;
 }
 
-export const createRoom = (input: { name: string; nickname: string; avatar?: string }) =>
-  httpPost<RoomMembership>('/api/rooms', input);
+export const createRoom = (input: {
+  name: string;
+  nickname: string;
+  avatar?: string;
+  visibility?: RoomVisibilityDto;
+}) => httpPost<RoomMembership>('/api/rooms', input);
+
+/** Active public rooms for the browse list. */
+export const listPublicRooms = () => httpGet<{ rooms: PublicRoomDto[] }>('/api/rooms/public');
 
 export const joinRoom = (input: { code: string; nickname?: string; avatar?: string }) =>
   httpPost<RoomMembership>('/api/rooms/join', input);

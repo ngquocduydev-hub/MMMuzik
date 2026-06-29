@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Radio } from 'lucide-react';
+import { Globe, Lock, Plus, Radio } from 'lucide-react';
 import { createRoom } from '@/features/room/services/roomApi';
 import { ApiError } from '@/lib/http';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -24,6 +25,7 @@ export function CreateRoomDialog() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [nickname, setNickname] = useState('');
+  const [isPrivate, setIsPrivate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -36,7 +38,11 @@ export function CreateRoomDialog() {
     setPending(true);
     setError(null);
     try {
-      const { room } = await createRoom({ name: name.trim(), nickname: nickname.trim() || 'Host' });
+      const { room } = await createRoom({
+        name: name.trim(),
+        nickname: nickname.trim() || 'Host',
+        visibility: isPrivate ? 'private' : 'public',
+      });
       router.push(`/room/${room.id}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't create the room. Try again.");
@@ -88,6 +94,27 @@ export function CreateRoomDialog() {
               onChange={(e) => setNickname(e.target.value)}
               placeholder="DJ Duy"
               maxLength={24}
+            />
+          </div>
+          <div className="flex items-start gap-3 rounded-xl border border-border bg-surface/40 p-3">
+            <div className="mt-0.5 text-muted-foreground">
+              {isPrivate ? <Lock className="h-4 w-4" /> : <Globe className="h-4 w-4" />}
+            </div>
+            <div className="flex-1">
+              <Label htmlFor="room-private" className="cursor-pointer">
+                Private room
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {isPrivate
+                  ? 'Hidden from the room list. People join with the code only.'
+                  : 'Listed publicly — anyone can find and join it.'}
+              </p>
+            </div>
+            <Switch
+              id="room-private"
+              checked={isPrivate}
+              onCheckedChange={setIsPrivate}
+              aria-label="Make this room private"
             />
           </div>
           {error && <p className="text-xs text-destructive">{error}</p>}

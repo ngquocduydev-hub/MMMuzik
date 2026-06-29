@@ -32,6 +32,13 @@ enum RoomStatus {
   @@map("room_status")
 }
 
+enum RoomVisibility {
+  public
+  private
+
+  @@map("room_visibility")
+}
+
 enum PlaybackStatus {
   idle
   playing
@@ -91,6 +98,7 @@ model Room {
   code          String         @unique @db.VarChar(8)
   name          String         @db.VarChar(80)
   status        RoomStatus     @default(active)
+  visibility    RoomVisibility @default(public) // public → listed + one-click join; private → listed but locked (code-only)
   hostSessionId String         @map("host_session_id") @db.Uuid
 
   // ── embedded PlaybackState (the authoritative anchor) ────────────────────
@@ -114,6 +122,7 @@ model Room {
   messages     ChatMessage[]
 
   @@index([status, lastActivityAt])
+  @@index([visibility, status, lastActivityAt]) // public-list + reaper scans
   @@map("rooms")
 }
 

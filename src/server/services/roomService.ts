@@ -1,9 +1,13 @@
 import { randomInt } from 'node:crypto';
-import type { Room, Participant, Session } from '@prisma/client';
+import type { Room, Participant, Session, RoomVisibility } from '@prisma/client';
 import { generateRoomCode, dedupeNickname } from '@/shared/domain/room';
 import { AppError, ERRORS } from '@/shared/errors';
-import { ROOM_CODE_MAX_ATTEMPTS, ROOM_MAX_PARTICIPANTS } from '@/shared/constants';
-import type { RoomSummaryDto } from '@/shared/types';
+import {
+  ROOM_CODE_MAX_ATTEMPTS,
+  ROOM_MAX_PARTICIPANTS,
+  PUBLIC_ROOMS_LIST_LIMIT,
+} from '@/shared/constants';
+import type { RoomSummaryDto, PublicRoomDto } from '@/shared/types';
 import * as roomRepo from '@/server/repositories/roomRepository';
 import * as queueRepo from '@/server/repositories/queueRepository';
 
@@ -15,9 +19,10 @@ const cryptoRand = (): number => randomInt(0, 1_000_000) / 1_000_000;
  * the creator becomes HOST + first participant.
  */
 export async function createRoom(
-  input: { name: string; nickname: string; avatar: string | null },
+  input: { name: string; nickname: string; avatar: string | null; visibility?: RoomVisibility },
   sessionId: string,
 ): Promise<{ room: Room; participant: Participant }> {
+  const visibility = input.visibility ?? 'public'; // default to public when unspecified
   for (let attempt = 0; attempt < ROOM_CODE_MAX_ATTEMPTS; attempt++) {
     const code = generateRoomCode(cryptoRand);
     if (await roomRepo.findRoomByCode(code)) continue; // pre-check (cheap)
@@ -25,6 +30,7 @@ export async function createRoom(
       const room = await roomRepo.createRoom({
         code,
         name: input.name,
+        visibility,
         hostSessionId: sessionId,
         host: { sessionId, nickname: input.nickname, avatar: input.avatar },
       });
@@ -60,6 +66,8 @@ export async function joinRoom(
   }
 
   const participants = await roomRepo.findParticipants(room.id);
+  const hasHost = participants.some((p) => p.role === 'host');
+  const wasIdle = room.status === 'idle';
   const desired = (input.nickname ?? session.displayName).trim();
   const nickname = dedupeNickname(
     desired,
@@ -71,6 +79,17 @@ export async function joinRoom(
     avatar: input.avatar ?? session.avatar,
     role: 'member',
   });
+
+  // Reclaim host on an abandoned room (the previous host left → room went Idle),
+  // and flip it back to Active. Keeps a re-discovered public room playable.
+  if (!hasHost) await roomRepo.transferHost(room.id, session.id);
+  if (wasIdle) await roomRepo.reactivateRoom(room.id);
+
+  if (!hasHost || wasIdle) {
+    const freshRoom = await roomRepo.findRoomById(room.id);
+    const freshParticipant = await roomRepo.findParticipant(room.id, session.id);
+    return { room: freshRoom ?? room, participant: freshParticipant ?? participant };
+  }
   return { room, participant };
 }
 
@@ -105,6 +124,36 @@ export async function getRoomSummaryByCode(code: string): Promise<RoomSummaryDto
   };
 }
 
+/**
+ * Rooms for the browse list (GET /api/rooms/public), most-recently-active first.
+ * Includes both public and private rooms; PRIVATE rooms are returned locked —
+ * their `code` and `nowPlayingTitle` are withheld so they can only be joined by
+ * typing the code. Resolves public rooms' now-playing titles in one batched query
+ * (no N+1). Closed rooms are never listed.
+ */
+export async function listPublicRooms(): Promise<PublicRoomDto[]> {
+  const rooms = await roomRepo.listPublicRooms(PUBLIC_ROOMS_LIST_LIMIT);
+  // Only resolve now-playing for PUBLIC rooms (private hide it).
+  const publicPlayingItemIds = rooms
+    .filter((r) => r.visibility === 'public')
+    .map((r) => r.pbCurrentItemId)
+    .filter((id): id is string => id !== null);
+  const titles = await queueRepo.findTitlesByItemIds(publicPlayingItemIds);
+  return rooms.map((r) => {
+    const isPublic = r.visibility === 'public';
+    return {
+      id: r.id,
+      code: isPublic ? r.code : null,
+      name: r.name,
+      visibility: r.visibility,
+      listenerCount: r.onlineCount,
+      nowPlayingTitle:
+        isPublic && r.pbCurrentItemId ? (titles.get(r.pbCurrentItemId) ?? null) : null,
+      createdAt: r.createdAt.toISOString(),
+    };
+  });
+}
+
 export function listParticipants(roomId: string): Promise<Participant[]> {
   return roomRepo.findParticipants(roomId);
 }
@@ -118,7 +167,10 @@ export interface LeaveResult {
 /**
  * Explicit leave: remove the participant. If they were host and others remain,
  * transfer to the longest-present remaining participant (prefer online). If no
- * one remains, close the room. A room always has exactly one host (SPEC §7.10).
+ * one remains, the room goes **Idle** (REQ-HOST-5) — it stays alive/discoverable
+ * and is removed later by the inactivity reaper (not closed on the spot, so a
+ * public room a creator leaves doesn't vanish). A room always has exactly one
+ * host while occupied (SPEC §7.10); host is reclaimed on the next join.
  */
 export async function leaveRoom(roomId: string, sessionId: string): Promise<LeaveResult> {
   const participant = await roomRepo.findParticipant(roomId, sessionId);
@@ -129,8 +181,8 @@ export async function leaveRoom(roomId: string, sessionId: string): Promise<Leav
 
   const remaining = await roomRepo.findParticipants(roomId); // ordered joinedAt asc
   if (remaining.length === 0) {
-    await roomRepo.closeRoom(roomId);
-    return { roomClosed: true, hostChanged: false, newHostSessionId: null };
+    await roomRepo.setRoomIdle(roomId);
+    return { roomClosed: false, hostChanged: false, newHostSessionId: null };
   }
 
   if (wasHost) {

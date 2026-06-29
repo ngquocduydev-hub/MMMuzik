@@ -60,6 +60,19 @@ export function findItem(roomId: string, itemId: string): Promise<QueueItemWithT
   return prisma.queueItem.findFirst({ where: { roomId, id: itemId }, include: { track: true } });
 }
 
+/**
+ * Map of queue-item id → track title for the given ids, in one query. Used by the
+ * public-room list to resolve each room's now-playing title without N+1.
+ */
+export async function findTitlesByItemIds(itemIds: string[]): Promise<Map<string, string>> {
+  if (itemIds.length === 0) return new Map();
+  const items = await prisma.queueItem.findMany({
+    where: { id: { in: itemIds } },
+    select: { id: true, track: { select: { title: true } } },
+  });
+  return new Map(items.map((i) => [i.id, i.track.title]));
+}
+
 export function count(roomId: string): Promise<number> {
   return prisma.queueItem.count({ where: { roomId } });
 }

@@ -5,6 +5,8 @@ import { config, isDevelopment, assertRuntimeConfig } from '../lib/config';
 import { logger } from '../lib/logger';
 import { createSocketServer } from './socket/io';
 import { startAdvanceWorker } from './workers/advanceWorker';
+import { startRoomReaperWorker } from './workers/roomReaperWorker';
+import { markAllParticipantsOffline } from './repositories/roomRepository';
 
 /**
  * Custom server entrypoint.
@@ -38,8 +40,14 @@ async function bootstrap(): Promise<void> {
     process.exit(1);
   });
 
+  // Reconcile stale presence: a fresh process has no live sockets, so clear any
+  // lingering online flags from a previous run (prevents phantom listeners).
+  const staleOnline = await markAllParticipantsOffline();
+  if (staleOnline > 0) logger.info({ staleOnline }, 'reset stale participant presence on boot');
+
   createSocketServer(httpServer);
   const stopAdvanceWorker = startAdvanceWorker();
+  const stopRoomReaperWorker = startRoomReaperWorker();
 
   httpServer.listen(config.PORT, () => {
     logger.info(
@@ -51,6 +59,7 @@ async function bootstrap(): Promise<void> {
   const shutdown = (signal: string) => {
     logger.info({ signal }, 'shutting down');
     stopAdvanceWorker();
+    stopRoomReaperWorker();
     httpServer.close(() => process.exit(0));
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));

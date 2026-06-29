@@ -30,7 +30,7 @@ function Fallback({ title, body, icon }: { title: string; body: string; icon?: R
       <h1 className="text-xl font-semibold text-foreground">{title}</h1>
       <p className="max-w-[34ch] text-sm text-muted-foreground">{body}</p>
       <Button asChild className="mt-1">
-        <Link href="/">Back to Home</Link>
+        <Link href="/rooms">Browse rooms</Link>
       </Button>
     </div>
   );

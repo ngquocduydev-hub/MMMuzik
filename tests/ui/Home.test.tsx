@@ -16,6 +16,7 @@ describe('HomePage', () => {
     render(<HomePage />);
     expect(screen.getByText('together')).toBeInTheDocument(); // gradient hero word
     expect(screen.getByRole('button', { name: /create a room/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /join a room/i })).toBeInTheDocument();
+    // "Join a room" is now a link to the browse list (was a code dialog).
+    expect(screen.getByRole('link', { name: /join a room/i })).toBeInTheDocument();
   });
 });

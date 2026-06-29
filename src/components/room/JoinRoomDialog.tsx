@@ -19,7 +19,9 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 
-/** Home "Join a room" dialog → validate code → /join/[code] (nickname step). */
+/** "Join with code" dialog → validate code → /join/[code] (nickname step).
+ *  Used on a locked (private) room card: the room is listed but its code is
+ *  withheld, so joining requires typing the code. */
 export function JoinRoomDialog() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -58,18 +60,18 @@ export function JoinRoomDialog() {
       }}
     >
       <DialogTrigger asChild>
-        <Button size="lg" variant="secondary" className="w-full gap-2 sm:w-auto">
-          <LogIn className="h-5 w-5" />
-          Join a room
+        <Button variant="secondary" className="w-full gap-2">
+          <LogIn className="h-4 w-4" />
+          Join with code
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <LogIn className="h-5 w-5 text-primary" />
-            Join a room
+            Join with a code
           </DialogTitle>
-          <DialogDescription>Enter the room code a friend shared with you.</DialogDescription>
+          <DialogDescription>This room is private — enter its code to join.</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-2">

@@ -1,0 +1,7 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- MMMuzik brand mark: the triple-M dots (violet · magenta · green) on the app's dark tile. -->
+  <rect width="64" height="64" rx="15" fill="#0D0D14"/>
+  <circle cx="18" cy="32" r="7.5" fill="#895AF6"/>
+  <circle cx="32" cy="32" r="7.5" fill="#F056AE"/>
+  <circle cx="46" cy="32" r="7.5" fill="#21C45D"/>
+</svg>

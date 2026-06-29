@@ -11,6 +11,7 @@ const room: RoomDto = {
   code: 'ABC234',
   name: 'Test',
   status: 'active',
+  visibility: 'public',
   hostSessionId: 's-host',
   createdAt: '2026-01-01T00:00:00.000Z',
 };
@@ -34,18 +35,16 @@ beforeEach(() => {
 describe('ChatPanel', () => {
   it('renders messages, shows the sender name on others, and hides it on own messages', () => {
     useRoomStore.getState().setSession({ id: 's-me', displayName: 'Me', avatar: null });
-    useChatStore
-      .getState()
-      .hydrate([
-        msg({ id: 'a', sessionId: 's-other', nickname: 'Anna', body: 'first message' }),
-        msg({
-          id: 'b',
-          sessionId: 's-me',
-          nickname: 'Me',
-          body: 'my reply',
-          sentAt: '2026-01-01T00:01:00.000Z',
-        }),
-      ]);
+    useChatStore.getState().hydrate([
+      msg({ id: 'a', sessionId: 's-other', nickname: 'Anna', body: 'first message' }),
+      msg({
+        id: 'b',
+        sessionId: 's-me',
+        nickname: 'Me',
+        body: 'my reply',
+        sentAt: '2026-01-01T00:01:00.000Z',
+      }),
+    ]);
     render(<ChatPanel />);
     expect(screen.getByText('first message')).toBeInTheDocument();
     expect(screen.getByText('my reply')).toBeInTheDocument();

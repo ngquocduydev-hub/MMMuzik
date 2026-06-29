@@ -12,6 +12,7 @@ const room: RoomDto = {
   code: 'ABC234',
   name: 'Test Room',
   status: 'active',
+  visibility: 'public',
   hostSessionId: 's-host',
   createdAt: '2026-01-01T00:00:00.000Z',
 };

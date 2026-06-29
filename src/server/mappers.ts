@@ -15,6 +15,7 @@ export const toRoomDto = (r: Room): RoomDto => ({
   code: r.code,
   name: r.name,
   status: r.status,
+  visibility: r.visibility,
   hostSessionId: r.hostSessionId,
   createdAt: r.createdAt.toISOString(),
 });

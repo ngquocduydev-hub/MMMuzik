@@ -1,4 +1,4 @@
-import { Prisma, type Room, type Participant } from '@prisma/client';
+import { Prisma, type Room, type Participant, type RoomVisibility } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import type { PlaybackAnchor } from '@/shared/domain/playback';
 
@@ -7,6 +7,7 @@ import type { PlaybackAnchor } from '@/shared/domain/playback';
 export function createRoom(data: {
   code: string;
   name: string;
+  visibility: RoomVisibility;
   hostSessionId: string;
   host: { sessionId: string; nickname: string; avatar: string | null };
 }): Promise<Room> {
@@ -14,6 +15,7 @@ export function createRoom(data: {
     data: {
       code: data.code,
       name: data.name,
+      visibility: data.visibility,
       hostSessionId: data.hostSessionId,
       status: 'active',
       participants: {
@@ -26,6 +28,32 @@ export function createRoom(data: {
       },
     },
   });
+}
+
+/**
+ * Rooms for the browse list, most-recently-active first. Includes BOTH public and
+ * private rooms (private are rendered locked by the UI); only closed rooms are
+ * excluded. active OR idle (empty-but-alive) — a room stays discoverable after its
+ * creator leaves, until the reaper removes it. Returns each room with its CURRENT
+ * online-participant count (one grouped query — no N+1).
+ */
+export async function listPublicRooms(
+  limit: number,
+): Promise<Array<Room & { onlineCount: number }>> {
+  const rooms = await prisma.room.findMany({
+    where: { status: { in: ['active', 'idle'] } },
+    orderBy: { lastActivityAt: 'desc' },
+    take: limit,
+  });
+  if (rooms.length === 0) return [];
+
+  const counts = await prisma.participant.groupBy({
+    by: ['roomId'],
+    where: { roomId: { in: rooms.map((r) => r.id) }, isOnline: true },
+    _count: { _all: true },
+  });
+  const onlineByRoom = new Map(counts.map((c) => [c.roomId, c._count._all]));
+  return rooms.map((r) => ({ ...r, onlineCount: onlineByRoom.get(r.id) ?? 0 }));
 }
 
 export function findRoomById(id: string): Promise<Room | null> {
@@ -48,19 +76,24 @@ export function countParticipants(roomId: string): Promise<number> {
   return prisma.participant.count({ where: { roomId } });
 }
 
-export function addParticipant(
+export async function addParticipant(
   roomId: string,
   p: { sessionId: string; nickname: string; avatar: string | null; role?: 'host' | 'member' },
 ): Promise<Participant> {
-  return prisma.participant.create({
-    data: {
-      roomId,
-      sessionId: p.sessionId,
-      nickname: p.nickname,
-      avatar: p.avatar,
-      role: p.role ?? 'member',
-    },
-  });
+  const [participant] = await prisma.$transaction([
+    prisma.participant.create({
+      data: {
+        roomId,
+        sessionId: p.sessionId,
+        nickname: p.nickname,
+        avatar: p.avatar,
+        role: p.role ?? 'member',
+      },
+    }),
+    // A join is activity — keep the room out of the reaper's grace window.
+    prisma.room.update({ where: { id: roomId }, data: { lastActivityAt: new Date() } }),
+  ]);
+  return participant;
 }
 
 // ── embedded playback anchor (pb_*) ──────────────────────────────────────
@@ -120,10 +153,16 @@ export function isUniqueViolation(err: unknown): boolean {
 
 // ── presence + membership + host transfer (Phase 4) ────────────────────────
 export async function setOnline(roomId: string, sessionId: string, online: boolean): Promise<void> {
-  await prisma.participant.updateMany({
-    where: { roomId, sessionId },
-    data: { isOnline: online, lastSeenAt: new Date(), disconnectedAt: online ? null : new Date() },
-  });
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.participant.updateMany({
+      where: { roomId, sessionId },
+      data: { isOnline: online, lastSeenAt: now, disconnectedAt: online ? null : now },
+    }),
+    // Presence change is activity — measures the reaper's grace from the last
+    // connect/disconnect so a just-emptied room isn't deleted prematurely.
+    prisma.room.update({ where: { id: roomId }, data: { lastActivityAt: now } }),
+  ]);
 }
 
 export async function removeParticipant(roomId: string, sessionId: string): Promise<void> {
@@ -135,6 +174,68 @@ export async function closeRoom(roomId: string): Promise<void> {
     where: { id: roomId },
     data: { status: 'closed', closedAt: new Date() },
   });
+}
+
+/**
+ * Empty room → Idle (REQ-HOST-5): alive but no participants; reaper cleans up
+ * later. Bumps `lastActivityAt` so the inactivity grace measures from the moment
+ * the room became empty — a room you just left stays discoverable for the full
+ * grace window regardless of how long you sat in it.
+ */
+export async function setRoomIdle(roomId: string): Promise<void> {
+  await prisma.room.update({
+    where: { id: roomId },
+    data: { status: 'idle', lastActivityAt: new Date() },
+  });
+}
+
+/** Idle → Active when someone joins (SPEC §5.1). */
+export async function reactivateRoom(roomId: string): Promise<void> {
+  await prisma.room.update({ where: { id: roomId }, data: { status: 'active' } });
+}
+
+/**
+ * Reset all presence to offline. Called once at server startup: a fresh process
+ * has zero live sockets, so any lingering `is_online=true` is stale (e.g. from a
+ * crash/restart) and would otherwise show phantom listeners and block the reaper.
+ * Real clients re-mark themselves online on (re)connect.
+ *
+ * NOTE: single-instance assumption (the current compose topology). Multi-instance
+ * presence reconciliation via Redis is future hardening (ARCHITECTURE future work).
+ */
+export async function markAllParticipantsOffline(): Promise<number> {
+  const res = await prisma.participant.updateMany({
+    where: { isOnline: true },
+    data: { isOnline: false, disconnectedAt: new Date() },
+  });
+  return res.count;
+}
+
+// ── inactive-room reaper (auto-cleanup job) ────────────────────────────────
+/**
+ * Ids of rooms with NO online participants whose last activity predates
+ * `threshold` — the auto-cleanup candidates. Excludes already-closed rooms.
+ */
+export async function findReapableRoomIds(threshold: Date): Promise<string[]> {
+  const rooms = await prisma.room.findMany({
+    where: {
+      status: { not: 'closed' },
+      lastActivityAt: { lt: threshold },
+      participants: { none: { isOnline: true } },
+    },
+    select: { id: true },
+  });
+  return rooms.map((r) => r.id);
+}
+
+/**
+ * Hard-delete rooms by id. Cascades to participants / queue_items / chat_messages
+ * (all `onDelete: Cascade`); Track rows are retained. Returns the count deleted.
+ */
+export async function deleteRooms(ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const res = await prisma.room.deleteMany({ where: { id: { in: ids } } });
+  return res.count;
 }
 
 /**

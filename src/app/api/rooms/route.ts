@@ -18,7 +18,12 @@ export async function POST(req: NextRequest) {
       avatar: body.avatar ?? null,
     });
     const { room, participant } = await createRoom(
-      { name: body.name, nickname: body.nickname, avatar: body.avatar ?? null },
+      {
+        name: body.name,
+        nickname: body.nickname,
+        avatar: body.avatar ?? null,
+        visibility: body.visibility,
+      },
       session.id,
     );
     await writeSessionCookie(session.id);

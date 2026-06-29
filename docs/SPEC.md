@@ -67,7 +67,7 @@ The product recreates the social feeling of "sharing a pair of headphones" for p
 The following are intentionally excluded and must **not** be assumed by any acceptance test:
 
 - User accounts, registration, passwords, profiles, or login.
-- Friends, followers, or public room discovery.
+- Friends, followers, or a social graph. *(Public room **discovery** — browsing/joining listed public rooms — is now in scope; see [§5.3](#53-room-visibility) and REQ-ROOM-10..13.)*
 - Saved playlists or persistent listening history.
 - Voice, video, or emoji/reaction features in chat.
 - AI recommendations or automatic DJ behavior.
@@ -135,6 +135,17 @@ Small, trusted groups — friends and internal teams — who want a spontaneous,
 
 > **Note.** Playback status is a distinct three-state value (Idle / Playing / Paused). "Paused" and "no track at all" are different states and must be distinguishable to participants.
 
+## 5.3 Room visibility
+
+A room has a **visibility** fixed at creation (orthogonal to the lifecycle/playback states above):
+
+| Visibility | In the browse list | How to join |
+|------------|--------------------|-------------|
+| **Public** (default) | Listed; name, listener count, and now-playing shown | One click from the list **or** by code / invite link |
+| **Private** | Listed but **locked** (🔒); name + listener count shown, but now-playing and the **code are withheld** | By code / invite link **only** (type the code) |
+
+> **Note.** Both visibilities appear in the browse list; visibility gates **how you join**, not whether the room is shown. A Private room's withheld code is its access control (like a password) — seeing it listed doesn't let you in. Trade-off: a Private room's existence + name + listener count are visible to anyone browsing.
+
 ---
 
 # 6. Cross-Cutting Requirements (Quality Attributes)
@@ -181,16 +192,21 @@ Let a user instantly create a shared listening space and share it, and let the s
 | **REQ-ROOM-3** | A newly created room starts in **Active** status with playback **Idle** (no current track). |
 | **REQ-ROOM-4** | The host can view and copy the room code and invite link at any time while in the room. |
 | **REQ-ROOM-5** | A room has the lifecycle defined in [§5.1](#51-room-lifecycle): Active, Idle, Closed. |
-| **REQ-ROOM-6** | A room with no participants for a configurable period **auto-closes** (transitions to Closed). |
+| **REQ-ROOM-6** | A room with **no online participants** for a configurable grace period is automatically **removed** by a background reaper — hard-deleted, cascading its queue and chat. *(Implementation diverges from the documented close→purge model — see [ARCHITECTURE §14](ARCHITECTURE.md#14-decision-log).)* |
 | **REQ-ROOM-7** | The host can explicitly **close** the room at any time; closing pauses playback and ends the room for everyone. |
 | **REQ-ROOM-8** | A **Closed** room rejects all new joins and rejects every further change (queue, playback, chat). Attempts to view a closed room for the purpose of joining must clearly indicate it is unavailable (not joinable). |
 | **REQ-ROOM-9** | The invite link must direct a recipient to the join screen for that specific room. |
+| **REQ-ROOM-10** | On creation a room is assigned a **visibility**: **Public** (default) or **Private**. See [§5.3](#53-room-visibility). |
+| **REQ-ROOM-11** | The browse list shows active/idle rooms of **both** visibilities. **Public** rooms can be **joined in one click** (no code) and show name, listener count, and current track. |
+| **REQ-ROOM-12** | **Private** rooms appear in the list **locked** (🔒): name + listener count are shown, but the current track and the **code are withheld**; joining requires **typing the code** (or using the invite link). |
+| **REQ-ROOM-13** | The room code / invite link works for **both** visibilities; visibility controls discoverability, not the code-join path. |
 
 ### Acceptance Criteria
 
 - **AC-ROOM-1** — *Given* a user supplies a room name and nickname, *when* they create a room, *then* they receive a unique room code and invite link, are marked as host, and are placed into the room as its only participant with playback Idle.
 - **AC-ROOM-2** — *Given* a room exists, *when* a second user joins with the same code, *then* both users are in the same room and see each other.
-- **AC-ROOM-3** — *Given* an Active room, *when* its last participant leaves, *then* the room transitions toward Idle and, after the configured inactivity period with no participants, auto-closes.
+- **AC-ROOM-3** — *Given* an Active room, *when* its last participant leaves, *then* the room transitions toward Idle and, after the configured grace period with no online participants, the reaper **hard-deletes** it (cascading queue + chat); a would-be joiner then sees it as unavailable.
+- **AC-ROOM-7** — *Given* a Public room and a Private room both exist, *when* a user opens the browse list, *then* both are listed; the Public room can be joined in one click, while the Private room shows a lock and requires the user to type its code to join.
 - **AC-ROOM-4** — *Given* the host triggers close, *when* the action completes, *then* the room status becomes Closed, playback is paused, and all participants are notified the room has ended.
 - **AC-ROOM-5** — *Given* a Closed room, *when* anyone attempts to join via its code or link, *then* the join is refused and the user is told the room is no longer available.
 - **AC-ROOM-6** — *Given* a Closed room, *when* anyone attempts any change (add track, play, send message), *then* the change is rejected with a "room closed" message and room state is unchanged.

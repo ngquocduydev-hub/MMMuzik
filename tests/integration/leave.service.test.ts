@@ -49,12 +49,30 @@ describe('leaveRoom — host transfer & close (SPEC §7.10)', () => {
     expect(parts.filter((p) => p.role === 'host')).toHaveLength(1); // exactly one host
   });
 
-  it('last participant leaving closes the room', async () => {
+  it('last participant leaving makes the room idle (not closed) so it stays discoverable', async () => {
     const host = await newSession('Host');
     const { room } = await createRoom({ name: 'P', nickname: 'DJ', avatar: null }, host.id);
     const result = await leaveRoom(room.id, host.id);
-    expect(result.roomClosed).toBe(true);
+    expect(result.roomClosed).toBe(false);
     const updated = await getRoom(room.id);
-    expect(updated.status).toBe('closed');
+    expect(updated.status).toBe('idle');
+  });
+
+  it('joining an abandoned (idle) room reactivates it and reclaims host', async () => {
+    const host = await newSession('Host');
+    const { room } = await createRoom({ name: 'P', nickname: 'DJ', avatar: null }, host.id);
+    await leaveRoom(room.id, host.id); // room → idle, no host
+    expect((await getRoom(room.id)).status).toBe('idle');
+
+    const newcomer = await newSession('Newcomer');
+    const { room: rejoined, participant } = await joinRoom(
+      { code: room.code, avatar: null },
+      newcomer,
+    );
+    expect(rejoined.status).toBe('active');
+    expect(rejoined.hostSessionId).toBe(newcomer.id);
+    expect(participant.role).toBe('host');
+    const parts = await listParticipants(room.id);
+    expect(parts.filter((p) => p.role === 'host')).toHaveLength(1); // exactly one host
   });
 });

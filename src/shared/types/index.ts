@@ -6,6 +6,7 @@
 export type PlaybackStatusDto = 'idle' | 'playing' | 'paused';
 export type ParticipantRoleDto = 'host' | 'member';
 export type RoomStatusDto = 'active' | 'idle' | 'closed';
+export type RoomVisibilityDto = 'public' | 'private';
 
 export interface SessionDto {
   id: string;
@@ -18,6 +19,7 @@ export interface RoomDto {
   code: string;
   name: string;
   status: RoomStatusDto;
+  visibility: RoomVisibilityDto;
   hostSessionId: string;
   createdAt: string; // ISO
 }
@@ -32,6 +34,23 @@ export interface RoomSummaryDto {
   name: string;
   listenerCount: number;
   nowPlayingTitle: string | null;
+}
+
+/**
+ * A room in the browse list (GET /api/rooms/public). Active/idle rooms of BOTH
+ * visibilities are listed; private rooms are shown locked. For privacy, a private
+ * room hides its `code` (join requires typing it) and its `nowPlayingTitle`.
+ * Public rooms expose `code` for the one-click join. `listenerCount` is the
+ * online participant count.
+ */
+export interface PublicRoomDto {
+  id: string;
+  code: string | null; // null for private rooms (must be entered to join)
+  name: string;
+  visibility: RoomVisibilityDto;
+  listenerCount: number;
+  nowPlayingTitle: string | null; // null for private rooms
+  createdAt: string; // ISO
 }
 
 export interface ParticipantDto {

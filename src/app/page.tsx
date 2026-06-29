@@ -1,9 +1,10 @@
-import { ListMusic, MessagesSquare, Radio } from 'lucide-react';
+import Link from 'next/link';
+import { ListMusic, LogIn, MessagesSquare, Radio } from 'lucide-react';
 import { Logo } from '@/components/layout/Logo';
 import { SoundBars } from '@/components/feedback/SoundBars';
 import { UserAvatar } from '@/components/ui/user-avatar';
+import { Button } from '@/components/ui/button';
 import { CreateRoomDialog } from '@/components/room/CreateRoomDialog';
-import { JoinRoomDialog } from '@/components/room/JoinRoomDialog';
 import { HomePreviewCard } from '@/components/room/HomePreviewCard';
 import { cn } from '@/lib/utils';
 
@@ -40,9 +41,12 @@ export default function HomePage() {
       <div className="relative mx-auto flex min-h-dvh max-w-6xl flex-col px-5 sm:px-8">
         <header className="flex items-center justify-between py-6">
           <Logo size="md" />
-          <span className="hidden text-sm text-muted-foreground sm:inline">
-            Listen together, in sync.
-          </span>
+          <Link
+            href="/rooms"
+            className="rounded-lg text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Browse rooms
+          </Link>
         </header>
 
         <main className="flex flex-1 flex-col justify-center gap-16 py-12 lg:py-16">
@@ -65,7 +69,12 @@ export default function HomePage() {
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <CreateRoomDialog />
-                <JoinRoomDialog />
+                <Button asChild size="lg" variant="secondary" className="w-full gap-2 sm:w-auto">
+                  <Link href="/rooms">
+                    <LogIn className="h-5 w-5" />
+                    Join a room
+                  </Link>
+                </Button>
               </div>
 
               <div className="flex items-center gap-3 pt-2">

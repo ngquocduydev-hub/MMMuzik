@@ -18,10 +18,14 @@ export const roomCodeSchema = z
 
 export const roomIdSchema = z.string().uuid('Invalid room id');
 
+/** Public → discoverable + open-join; private → hidden, join by code only. */
+export const roomVisibilitySchema = z.enum(['public', 'private']);
+
 export const createRoomSchema = z.object({
   name: roomNameSchema,
   nickname: nicknameSchema,
   avatar: avatarSchema,
+  visibility: roomVisibilitySchema.default('public'),
 });
 
 export const joinRoomSchema = z.object({

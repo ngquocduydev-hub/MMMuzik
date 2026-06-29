@@ -166,6 +166,7 @@ CREATE TABLE rooms (
   code              varchar(12)  NOT NULL,
   name              varchar(80)  NOT NULL,
   status            room_status  NOT NULL DEFAULT 'active',
+  visibility        room_visibility NOT NULL DEFAULT 'public',  -- public ⇒ listed + one-click join; private ⇒ listed but locked (code-only)
   host_session_id   uuid         NOT NULL,        -- domain-enforced: a participant of this room
   -- embedded Playback State (owned 1:1) -----------------------------------
   pb_current_item_id uuid,                         -- NULL ⇒ Idle (no current track)
@@ -183,6 +184,7 @@ CREATE TABLE rooms (
   CONSTRAINT ck_rooms_position    CHECK (pb_position_ms >= 0)
 );
 CREATE INDEX ix_rooms_status_activity ON rooms(status, last_activity_at);  -- idle reaper
+CREATE INDEX ix_rooms_visibility_status_activity ON rooms(visibility, status, last_activity_at);  -- public browse list + reaper
 CREATE INDEX ix_rooms_pb_current_item ON rooms(pb_current_item_id);
 
 -- ── participants (composite PK — a session is unique PER ROOM) ────────────
@@ -298,6 +300,7 @@ model Room {
   code            String        @unique @db.VarChar(12)
   name            String        @db.VarChar(80)
   status          RoomStatus    @default(active)
+  visibility      RoomVisibility @default(public)                  // public ⇒ listed; private ⇒ code-only
   hostSessionId   String        @map("host_session_id") @db.Uuid   // domain-enforced
 
   // ── embedded Playback State (owned 1:1) ───────────────────────────────
@@ -464,8 +467,11 @@ model ChatMessage {
 
 Rooms are ephemeral but persisted (durability + reconnect across restarts — V1 §5.4). Retention is enforced by scheduled cleanup jobs (the V2 reapers, ARCHITECTURE §8.3) and is **runtime-configurable**.
 
+> **Implemented divergence (ARCHITECTURE §14).** The shipped inactive-room reaper **hard-deletes** rooms with no online participants whose `last_activity_at` predates the grace window, instead of the close→purge two-step below. It cascades `participants`/`queue_items`/`chat_messages` in one step. The close→purge rows below describe the original intent and the host-initiated `closed` path (REQ-ROOM-7), which still applies.
+
 | Data | Lifetime | Cleanup mechanism |
 |------|----------|-------------------|
+| **Inactive rooms (shipped)** | No online participants for `ROOM_INACTIVE_GRACE_MS` (default 15 min). | **Room reaper** (`src/server/workers/roomReaperWorker.ts`): `status != 'closed' AND last_activity_at < now()-GRACE AND no online participants` → **hard delete** (children cascade). Single-instance Redis `SET NX` lock. |
 | **Active/Idle rooms** | While in use. Idle rooms auto-close after the inactivity window. | Idle-room reaper: `status='idle' AND last_activity_at < now()-IDLE_TTL` → set `closed`. |
 | **Closed rooms (+ all children)** | Retained briefly for late reconnect/forensics, then purged. **Default: 7 days.** | Purge job deletes `rooms WHERE status='closed' AND closed_at < now()-CLOSED_RETENTION`; `participants`, `queue_items`, `chat_messages` cascade. |
 | **Participants** | Live with the room; removed on explicit leave. | Cascade on room purge; grace reaper finalizes departures. |

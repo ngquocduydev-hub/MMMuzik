@@ -26,7 +26,7 @@ export function RoomHeader() {
     } catch {
       /* leave best-effort */
     } finally {
-      router.push('/');
+      router.push('/rooms');
     }
   };
 
